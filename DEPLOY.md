@@ -78,15 +78,34 @@ openssl rand -hex 32   # JWT_REFRESH_SECRET
 openssl rand -hex 32   # MESSAGE_ENCRYPTION_KEY
 ```
 
-### 2.4 Installer les dépendances et migrer
+### 2.4 Activer l'environnement Node.js et installer les dépendances
 
-Via SSH :
+> **Important o2switch** : le shell SSH utilise Node.js 10 par défaut. Il faut activer
+> l'environnement virtuel de l'app cPanel **avant chaque session npm/node**.
+
 ```bash
-cd ~/quizztest-backend
+# Trouver le numéro de version Node.js configuré dans cPanel
+ls ~/nodevenv/api.votre-domaine.com/
+# affiche : 18/  ou  20/  etc.
+
+# Activer l'environnement (adapter le nom de dossier et la version)
+source ~/nodevenv/api.votre-domaine.com/18/bin/activate
+
+# Vérifier
+node --version   # doit afficher v18.x ou v20.x
+
+# Installer les dépendances de production
+cd ~/api.votre-domaine.com
 npm install --omit=dev
+
+# Générer le client Prisma pour Linux
 npx prisma generate
+
+# Appliquer les migrations
 npx prisma migrate deploy
-npx prisma db seed     # Crée les rôles et l'admin initial
+
+# Seed : rôles + compte admin initial
+node -e "import('./dist/prisma/seed.js').then(m => m.default())"
 ```
 
 ### 2.5 Démarrer l'application
@@ -151,6 +170,14 @@ npx tsx prisma/import-questions.ts   # si tsx disponible sur le serveur
 ---
 
 ## Résolution des problèmes courants
+
+### Node.js version trop ancienne (npm install échoue)
+o2switch fournit Node.js 10 dans le shell par défaut. Il faut activer l'environnement de l'app :
+```bash
+source ~/nodevenv/NOM_APP/VERSION/bin/activate
+node --version   # doit afficher >= 18
+```
+Si l'app n'existe pas encore dans cPanel, la créer d'abord via *Setup Node.js App*.
 
 ### WebSocket ne se connecte pas
 - Vérifier que `FRONTEND_URL` dans le backend correspond **exactement** à l'URL du frontend (avec `https://`)
