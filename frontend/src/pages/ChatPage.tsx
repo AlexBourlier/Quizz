@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+
+const EMPTY: never[] = [];
 import { ChatPanel } from "../components/ChatPanel";
 import { QuizPanel } from "../components/QuizPanel";
 import { Sidebar } from "../components/Sidebar";
@@ -17,8 +19,8 @@ export function ChatPage() {
   const setRooms = useChatStore((state) => state.setRooms);
   const activeRoomId = useChatStore((state) => state.activeRoomId);
   const setActiveRoom = useChatStore((state) => state.setActiveRoom);
-  const messages = useChatStore((state) => (activeRoomId ? state.messagesByRoom[activeRoomId] ?? [] : []));
-  const typingUsers = useChatStore((state) => (activeRoomId ? state.typingByRoom[activeRoomId] ?? [] : []));
+  const messages = useChatStore((state) => (activeRoomId ? state.messagesByRoom[activeRoomId] : undefined) ?? EMPTY);
+  const typingUsers = useChatStore((state) => (activeRoomId ? state.typingByRoom[activeRoomId] : undefined) ?? EMPTY);
   const leaderboard = useChatStore((state) => state.quiz.leaderboard);
 
   const [loadError, setLoadError] = useState<string | null>(null);
