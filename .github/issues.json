@@ -1,0 +1,52 @@
+[
+  {
+    "title": "Backend authentication",
+    "bodyFile": ".github/issue-bodies/backend-authentication.md",
+    "labels": ["feature", "backend", "auth", "priority:critical"]
+  },
+  {
+    "title": "Websocket realtime chat",
+    "bodyFile": ".github/issue-bodies/websocket-realtime-chat.md",
+    "labels": ["feature", "websocket", "backend", "priority:critical"]
+  },
+  {
+    "title": "Room permissions",
+    "bodyFile": ".github/issue-bodies/room-permissions.md",
+    "labels": ["feature", "backend", "auth", "priority:high"]
+  },
+  {
+    "title": "Quiz bot engine",
+    "bodyFile": ".github/issue-bodies/quiz-bot-engine.md",
+    "labels": ["feature", "quiz-bot", "backend", "priority:high"]
+  },
+  {
+    "title": "Progressive hints system",
+    "bodyFile": ".github/issue-bodies/progressive-hints-system.md",
+    "labels": ["feature", "quiz-bot", "priority:high"]
+  },
+  {
+    "title": "Leaderboard system",
+    "bodyFile": ".github/issue-bodies/leaderboard-system.md",
+    "labels": ["feature", "quiz-bot", "frontend", "priority:medium"]
+  },
+  {
+    "title": "Docker setup",
+    "bodyFile": ".github/issue-bodies/docker-setup.md",
+    "labels": ["feature", "docker", "priority:medium"]
+  },
+  {
+    "title": "Frontend UI",
+    "bodyFile": ".github/issue-bodies/frontend-ui.md",
+    "labels": ["feature", "frontend", "ui-ux", "priority:high"]
+  },
+  {
+    "title": "Security hardening",
+    "bodyFile": ".github/issue-bodies/security-hardening.md",
+    "labels": ["security", "backend", "priority:critical"]
+  },
+  {
+    "title": "Responsive mobile UI",
+    "bodyFile": ".github/issue-bodies/responsive-mobile-ui.md",
+    "labels": ["enhancement", "frontend", "ui-ux", "priority:medium"]
+  }
+]

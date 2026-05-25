@@ -1,0 +1,28 @@
+[
+  { "name": "bug", "color": "d73a4a", "description": "Bug report" },
+  { "name": "feature", "color": "0e8a16", "description": "New feature" },
+  { "name": "enhancement", "color": "a2eeef", "description": "Improvement" },
+  { "name": "refactor", "color": "5319e7", "description": "Refactoring task" },
+  { "name": "documentation", "color": "0075ca", "description": "Documentation" },
+  { "name": "security", "color": "b60205", "description": "Security hardening" },
+  { "name": "performance", "color": "fbca04", "description": "Performance work" },
+
+  { "name": "priority:low", "color": "c2e0c6", "description": "Low priority" },
+  { "name": "priority:medium", "color": "fbca04", "description": "Medium priority" },
+  { "name": "priority:high", "color": "f9d0c4", "description": "High priority" },
+  { "name": "priority:critical", "color": "b60205", "description": "Critical priority" },
+
+  { "name": "in-progress", "color": "1d76db", "description": "Work in progress" },
+  { "name": "blocked", "color": "000000", "description": "Blocked task" },
+  { "name": "review", "color": "5319e7", "description": "In review" },
+  { "name": "completed", "color": "0e8a16", "description": "Completed task" },
+
+  { "name": "frontend", "color": "0052cc", "description": "Frontend scope" },
+  { "name": "backend", "color": "5319e7", "description": "Backend scope" },
+  { "name": "websocket", "color": "fbca04", "description": "Realtime socket layer" },
+  { "name": "database", "color": "006b75", "description": "Database scope" },
+  { "name": "auth", "color": "c5def5", "description": "Authentication" },
+  { "name": "quiz-bot", "color": "fef2c0", "description": "Quiz engine" },
+  { "name": "docker", "color": "bfd4f2", "description": "Containerization" },
+  { "name": "ui-ux", "color": "d4c5f9", "description": "UI and UX scope" }
+]

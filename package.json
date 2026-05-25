@@ -1,0 +1,19 @@
+{
+  "name": "quizztest",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w backend & npm run dev -w frontend",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "lint": "npm run lint -w backend && npm run lint -w frontend",
+    "format": "npm run format -w backend && npm run format -w frontend",
+    "prisma:generate": "npm run prisma:generate -w backend",
+    "prisma:migrate": "npm run prisma:migrate -w backend",
+    "github:labels": "node scripts/create-labels.mjs",
+    "github:issues": "node scripts/create-issues.mjs"
+  }
+}
