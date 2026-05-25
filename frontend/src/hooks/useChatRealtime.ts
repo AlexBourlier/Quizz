@@ -1,7 +1,10 @@
 import { useEffect } from "react";
-import { api } from "../services/api";
-import { getSocket } from "../sockets/chat.socket";
+import { disconnectSocket, getSocket } from "../sockets/chat.socket";
+import { useAuthStore } from "../store/auth.store";
 import { useChatStore } from "../store/chat.store";
+import { useDmStore } from "../store/dm.store";
+import { useNotificationStore } from "../store/notification.store";
+import type { ConnectedUser, DmMessage } from "../types";
 
 export function useChatRealtime() {
   const activeRoomId = useChatStore((s) => s.activeRoomId);
@@ -17,6 +20,8 @@ export function useChatRealtime() {
   const setQuizEnded = useChatStore((s) => s.setQuizEnded);
   const setLeaderboard = useChatStore((s) => s.setLeaderboard);
   const setQuizCloseAnswer = useChatStore((s) => s.setQuizCloseAnswer);
+  const setConnectedUsers = useChatStore((s) => s.setConnectedUsers);
+  const setRoomCount = useChatStore((s) => s.setRoomCount);
 
   useEffect(() => {
     const socket = getSocket();
@@ -38,8 +43,8 @@ export function useChatRealtime() {
       setTyping(roomId, updated);
     });
 
-    socket.on("quiz:question", ({ question, hint, category, difficulty }: { question: string; hint: string; category: string; difficulty: string }) => {
-      setQuizQuestion(question, hint, category, difficulty);
+    socket.on("quiz:question", ({ roomId, question, hint, category, difficulty }: { roomId: string; question: string; hint: string; category: string; difficulty: string }) => {
+      setQuizQuestion(roomId, question, hint, category, difficulty);
     });
     socket.on("quiz:hint", ({ hint, hintsUsed }: { hint: string; hintsUsed: number }) => {
       setQuizHint(hint, hintsUsed);
@@ -50,14 +55,63 @@ export function useChatRealtime() {
     socket.on("quiz:timeout", ({ answer }: { answer: string }) => {
       setQuizTimeout(answer);
     });
-    socket.on("quiz:ended", () => {
-      setQuizEnded();
-    });
+    socket.on("quiz:ended", () => setQuizEnded());
     socket.on("quiz:close-answer", () => {
       setQuizCloseAnswer(true);
       setTimeout(() => setQuizCloseAnswer(false), 2000);
     });
     socket.on("quiz:leaderboard", setLeaderboard);
+
+    socket.on("room:users-updated", ({ roomId, users }: { roomId: string; users: ConnectedUser[] }) => {
+      setConnectedUsers(roomId, users);
+    });
+    socket.on("room:count-updated", ({ roomId, count }: { roomId: string; count: number }) => {
+      setRoomCount(roomId, count);
+    });
+
+    // Modération : actions subies par l'utilisateur courant
+    socket.on("mod:banned", ({ reason }: { reason: string }) => {
+      useNotificationStore.getState().addToast("error", `Vous avez été banni : ${reason}`);
+      useAuthStore.getState().logout().catch(() => undefined);
+      disconnectSocket();
+    });
+    socket.on("mod:kicked", ({ roomId }: { roomId: string }) => {
+      useChatStore.getState().setActiveRoom(useChatStore.getState().rooms[0]?.id ?? roomId);
+      useNotificationStore.getState().addToast("warning", "Vous avez été expulsé du salon");
+    });
+    socket.on("mod:muted", ({ minutes }: { minutes: number }) => {
+      useNotificationStore.getState().addToast("warning", `Vous êtes muet pendant ${minutes} minute(s).`);
+    });
+
+    // Promotion automatique de rôle
+    socket.on("mod:promoted", ({ accessToken, refreshToken }: { accessToken: string; refreshToken: string }) => {
+      useAuthStore.getState().updateUserAndTokens(accessToken, refreshToken);
+      useNotificationStore.getState().addToast("success", "Félicitations ! Vous avez été promu modérateur.");
+    });
+
+    // Messages privés entrants
+    socket.on("dm:received", (msg: DmMessage) => {
+      const currentUserId = useAuthStore.getState().user?.id;
+      const otherUserId = msg.sender.id === currentUserId
+        ? (msg.recipientId ?? "")
+        : msg.sender.id;
+      if (!otherUserId) return;
+
+      const dm = useDmStore.getState();
+      dm.appendDmMessage(otherUserId, msg);
+
+      // Ajouter l'expéditeur aux contacts si inconnu
+      if (msg.sender.id !== currentUserId) {
+        dm.addContact({ id: msg.sender.id, username: msg.sender.username, color: msg.sender.color });
+      }
+
+      // Incrémenter non-lus sauf si la conversation est active en mode DM
+      const isViewing = dm.dmMode && dm.activeDmUserId === otherUserId;
+      if (!isViewing) {
+        dm.incrementUnread(otherUserId);
+        useNotificationStore.getState().addToast("info", `💬 ${msg.sender.username} : ${msg.content.slice(0, 60)}`);
+      }
+    });
 
     return () => {
       socket.off("message:new", appendMessage);
@@ -71,20 +125,26 @@ export function useChatRealtime() {
       socket.off("quiz:ended");
       socket.off("quiz:close-answer");
       socket.off("quiz:leaderboard");
+      socket.off("room:users-updated");
+      socket.off("room:count-updated");
+      socket.off("mod:banned");
+      socket.off("mod:kicked");
+      socket.off("mod:muted");
+      socket.off("mod:promoted");
+      socket.off("dm:received");
     };
-  }, [activeRoomId, appendMessage, patchMessage, removeMessage, setLeaderboard, setQuizCloseAnswer, setQuizEnded, setQuizHint, setQuizQuestion, setQuizTimeout, setQuizWinner, setTyping]);
+  }, [activeRoomId, appendMessage, patchMessage, removeMessage, setConnectedUsers, setLeaderboard, setQuizCloseAnswer, setQuizEnded, setQuizHint, setQuizQuestion, setQuizTimeout, setQuizWinner, setRoomCount, setTyping]);
 
   useEffect(() => {
     if (!activeRoomId) return;
     const socket = getSocket();
     if (!socket) return;
 
-    socket.emit("room:join", { roomId: activeRoomId }, async (response: { ok: boolean; messages?: unknown[] }) => {
-      if (response.ok && response.messages) {
-        setMessages(activeRoomId, response.messages as never);
-      } else {
-        const { data } = await api.get(`/messages/rooms/${activeRoomId}`);
-        setMessages(activeRoomId, data);
+    socket.emit("room:join", { roomId: activeRoomId }, (response: { ok: boolean }) => {
+      if (response.ok) {
+        // Only reset if no live messages cached for this room yet in this session
+        const existing = useChatStore.getState().messagesByRoom[activeRoomId];
+        if (!existing) setMessages(activeRoomId, []);
       }
     });
 

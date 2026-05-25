@@ -42,6 +42,9 @@ model User {
   password         String
   roleId           Int
   avatar           String?            @db.VarChar(255)
+  color            String?            @db.VarChar(7)
+  bannedAt         DateTime?
+  mutedUntil       DateTime?
   refreshTokenHash String?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
@@ -52,6 +55,10 @@ model User {
   reactions        MessageReaction[]
   quizScores       QuizScore[]
   wonRounds        QuizRoundHistory[] @relation("RoundWinner")
+  sentDMs          PrivateMessage[]   @relation("SentDMs")
+  receivedDMs      PrivateMessage[]   @relation("ReceivedDMs")
+  reportsMade      Report[]           @relation("ReporterReports")
+  reportsReceived  Report[]           @relation("ReportedReports")
 
   @@index([roleId])
 }
@@ -61,6 +68,9 @@ model Room {
   name             String      @unique @db.VarChar(64)
   type             RoomType
   requiredRoleId   Int?
+  rules            String?     @db.Text
+  ageLimit         Int?
+  maxOccupants     Int?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
@@ -116,6 +126,22 @@ model MessageReaction {
 
   @@unique([messageId, userId, emoji])
   @@index([userId])
+}
+
+model PrivateMessage {
+  id          String    @id @default(cuid())
+  senderId    String
+  recipientId String
+  content     String    @db.Text
+  iv          String    @db.VarChar(32)
+  createdAt   DateTime  @default(now())
+  readAt      DateTime?
+
+  sender      User      @relation("SentDMs",      fields: [senderId],    references: [id], onDelete: Cascade)
+  recipient   User      @relation("ReceivedDMs",  fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([senderId, recipientId, createdAt])
+  @@index([recipientId, createdAt])
 }
 
 model QuizQuestion {
@@ -182,4 +208,22 @@ model QuizScore {
 
   @@unique([userId])
   @@index([score(sort: Desc)])
+}
+
+model Report {
+  id             String    @id @default(cuid())
+  reporterId     String
+  reportedId     String
+  messageContent String?   @db.Text
+  messageAt      DateTime?
+  context        String    @db.VarChar(20)
+  reason         String?   @db.Text
+  createdAt      DateTime  @default(now())
+  resolved       Boolean   @default(false)
+
+  reporter       User      @relation("ReporterReports", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported       User      @relation("ReportedReports", fields: [reportedId], references: [id], onDelete: Cascade)
+
+  @@index([reportedId])
+  @@index([resolved])
 }

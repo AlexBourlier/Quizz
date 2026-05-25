@@ -14,7 +14,8 @@ const envSchema = z.object({
   FRONTEND_URL: z.string().url(),
   QUIZ_HINT_INTERVAL_MS: z.coerce.number().default(30000),
   QUIZ_QUESTION_TIMEOUT_MS: z.coerce.number().default(120000),
-  QUIZ_ANSWER_COOLDOWN_MS: z.coerce.number().default(1000)
+  QUIZ_ANSWER_COOLDOWN_MS: z.coerce.number().default(1000),
+  MESSAGE_ENCRYPTION_KEY: z.string().length(64)
 });
 
 export const env = envSchema.parse(process.env);

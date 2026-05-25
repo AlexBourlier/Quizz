@@ -1,4 +1,3 @@
-import { RoleName } from "@prisma/client";
 import type { Server as HttpServer } from "http";
 import { Server } from "socket.io";
 import { env } from "../config/env.js";
@@ -6,9 +5,17 @@ import {
   addReaction,
   createMessage,
   deleteMessage,
-  editMessage,
-  getRoomMessages
+  editMessage
 } from "../services/messages.service.js";
+import {
+  banUser,
+  checkBanned,
+  checkMuted,
+  muteUser,
+  promoteToMod,
+  unbanUser
+} from "../services/moderation.service.js";
+import { getDmContacts, getDmHistory, markDmsRead, sendDm } from "../services/dm.service.js";
 import { canAccessRoom, joinRoom, leaveRoom } from "../services/rooms.service.js";
 import { quizBotEngine } from "../services/quiz-bot.service.js";
 import { getLeaderboard } from "../services/quiz.service.js";
@@ -16,9 +23,23 @@ import { verifyAccessToken } from "../utils/jwt.js";
 
 const spamTracker = new Map<string, number[]>();
 
+async function getRoomUsers(io: Server, roomId: string) {
+  const sockets = await io.in(roomId).fetchSockets();
+  return sockets.map((s) => ({
+    id: s.data.user?.sub as string,
+    username: s.data.user?.username as string,
+    role: s.data.user?.role as string
+  }));
+}
+
+async function broadcastRoomCount(io: Server, roomId: string) {
+  const count = (await io.in(roomId).fetchSockets()).length;
+  io.emit("room:count-updated", { roomId, count });
+}
+
 function isSpam(socketId: string) {
   const now = Date.now();
-  const timeline = (spamTracker.get(socketId) ?? []).filter((timestamp) => now - timestamp < 10_000);
+  const timeline = (spamTracker.get(socketId) ?? []).filter((t) => now - t < 10_000);
   timeline.push(now);
   spamTracker.set(socketId, timeline);
   return timeline.length > 12;
@@ -26,10 +47,7 @@ function isSpam(socketId: string) {
 
 export function buildSocketServer(httpServer: HttpServer) {
   const io = new Server(httpServer, {
-    cors: {
-      origin: env.FRONTEND_URL,
-      credentials: true
-    },
+    cors: { origin: env.FRONTEND_URL, credentials: true },
     transports: ["websocket", "polling"]
   });
 
@@ -39,9 +57,7 @@ export function buildSocketServer(httpServer: HttpServer) {
         ? socket.handshake.auth.token
         : socket.handshake.headers.authorization?.replace("Bearer ", "");
 
-    if (!token) {
-      return next(new Error("Unauthorized"));
-    }
+    if (!token) return next(new Error("Unauthorized"));
 
     try {
       const payload = verifyAccessToken(token);
@@ -53,10 +69,15 @@ export function buildSocketServer(httpServer: HttpServer) {
   });
 
   io.on("connection", (socket) => {
+    if (socket.data.user.role === "admin") {
+      quizBotEngine.autoStartInRoom(io, "quiz-arena").catch(() => undefined);
+    }
+
+    // ── Room ─────────────────────────────────────────────────
     socket.on("room:join", async ({ roomId }, callback) => {
       try {
         const user = socket.data.user;
-        const access = await canAccessRoom(roomId, user.sub, user.role as RoleName);
+        const access = await canAccessRoom(roomId, user.sub, user.role as string);
         if (!access) {
           callback?.({ ok: false, message: "Access denied" });
           return;
@@ -64,10 +85,12 @@ export function buildSocketServer(httpServer: HttpServer) {
 
         await joinRoom(roomId, user.sub);
         socket.join(roomId);
-        io.to(roomId).emit("room:user-joined", { roomId, userId: user.sub, username: user.username });
 
-        const messages = await getRoomMessages(roomId);
-        callback?.({ ok: true, messages });
+        callback?.({ ok: true, messages: [] });
+
+        const users = await getRoomUsers(io, roomId);
+        io.to(roomId).emit("room:users-updated", { roomId, users });
+        await broadcastRoomCount(io, roomId);
       } catch (error) {
         callback?.({ ok: false, message: String(error) });
       }
@@ -77,9 +100,12 @@ export function buildSocketServer(httpServer: HttpServer) {
       const user = socket.data.user;
       await leaveRoom(roomId, user.sub);
       socket.leave(roomId);
-      io.to(roomId).emit("room:user-left", { roomId, userId: user.sub });
+      const users = await getRoomUsers(io, roomId);
+      io.to(roomId).emit("room:users-updated", { roomId, users });
+      await broadcastRoomCount(io, roomId);
     });
 
+    // ── Typing ────────────────────────────────────────────────
     socket.on("typing:start", ({ roomId }) => {
       socket.to(roomId).emit("typing:update", {
         roomId,
@@ -98,6 +124,7 @@ export function buildSocketServer(httpServer: HttpServer) {
       });
     });
 
+    // ── Messages ──────────────────────────────────────────────
     socket.on("message:send", async ({ roomId, content }, callback) => {
       try {
         if (isSpam(socket.id)) {
@@ -106,7 +133,18 @@ export function buildSocketServer(httpServer: HttpServer) {
         }
 
         const user = socket.data.user;
-        const access = await canAccessRoom(roomId, user.sub, user.role as RoleName);
+
+        if (await checkBanned(user.sub)) {
+          callback?.({ ok: false, message: "Compte banni" });
+          return;
+        }
+
+        if (await checkMuted(user.sub)) {
+          callback?.({ ok: false, message: "Vous êtes temporairement muet" });
+          return;
+        }
+
+        const access = await canAccessRoom(roomId, user.sub, user.role as string);
         if (!access) {
           callback?.({ ok: false, message: "Access denied" });
           return;
@@ -118,14 +156,16 @@ export function buildSocketServer(httpServer: HttpServer) {
           return;
         }
 
-        const message = await createMessage({
-          roomId,
-          userId: user.sub,
-          content: safeContent
-        });
-
+        const message = await createMessage({ roomId, userId: user.sub, content: safeContent });
         io.to(roomId).emit("message:new", message);
         callback?.({ ok: true, message });
+
+        await quizBotEngine.submitAnswer(io, socket, {
+          roomId,
+          answer: safeContent,
+          userId: user.sub,
+          username: user.username
+        });
       } catch (error) {
         callback?.({ ok: false, message: String(error) });
       }
@@ -166,15 +206,184 @@ export function buildSocketServer(httpServer: HttpServer) {
       }
     });
 
-    socket.on("quiz:start", async ({ roomId, category, difficulty }, callback) => {
+    // ── Modération ────────────────────────────────────────────
+    socket.on("mod:ban", async ({ username }, callback) => {
       try {
-        const role = socket.data.user.role as RoleName;
-        if (role !== RoleName.admin && role !== RoleName.moderator) {
+        const role = socket.data.user.role as string;
+        if (role !== "admin" && role !== "moderator") {
           callback?.({ ok: false, message: "Insufficient role" });
           return;
         }
+        const banned = await banUser(username);
+        // Kick all sockets of banned user
+        const all = await io.fetchSockets();
+        for (const s of all) {
+          if (s.data.user?.sub === banned.id) {
+            s.emit("mod:banned", { reason: "Vous avez été banni" });
+            s.disconnect(true);
+          }
+        }
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
 
+    socket.on("mod:unban", async ({ username }, callback) => {
+      try {
+        const role = socket.data.user.role as string;
+        if (role !== "admin" && role !== "moderator") {
+          callback?.({ ok: false, message: "Insufficient role" });
+          return;
+        }
+        await unbanUser(username);
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    socket.on("mod:timeout", async ({ username, minutes = 10 }, callback) => {
+      try {
+        const role = socket.data.user.role as string;
+        if (role !== "admin" && role !== "moderator") {
+          callback?.({ ok: false, message: "Insufficient role" });
+          return;
+        }
+        const { user, mutedUntil } = await muteUser(username, minutes);
+        const all = await io.fetchSockets();
+        for (const s of all) {
+          if (s.data.user?.sub === user.id) {
+            s.emit("mod:muted", { minutes, until: mutedUntil });
+          }
+        }
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    socket.on("mod:kick", async ({ username, roomId }, callback) => {
+      try {
+        const role = socket.data.user.role as string;
+        if (role !== "admin" && role !== "moderator") {
+          callback?.({ ok: false, message: "Insufficient role" });
+          return;
+        }
+        const all = await io.in(roomId).fetchSockets();
+        for (const s of all) {
+          if (s.data.user?.username === username) {
+            s.emit("mod:kicked", { roomId });
+            s.leave(roomId);
+          }
+        }
+        const users = await getRoomUsers(io, roomId);
+        io.to(roomId).emit("room:users-updated", { roomId, users });
+        await broadcastRoomCount(io, roomId);
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    socket.on("mod:promote", async ({ username }, callback) => {
+      try {
+        if (socket.data.user.role !== "admin") {
+          callback?.({ ok: false, message: "Seul un admin peut promouvoir" });
+          return;
+        }
+        const { user, accessToken, refreshToken } = await promoteToMod(username);
+
+        // Update server-side socket data immediately (no reconnect needed)
+        const allSockets = await io.fetchSockets();
+        for (const s of allSockets) {
+          if (s.data.user?.sub === user.id) {
+            s.data.user = { ...s.data.user, role: "moderator" };
+            s.emit("mod:promoted", { accessToken, refreshToken });
+          }
+        }
+
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    // ── Messages privés ───────────────────────────────────────
+    socket.on("dm:send", async ({ recipientUsername, content }, callback) => {
+      try {
+        const user = socket.data.user;
+        const { dm, recipientId, plainContent } = await sendDm(user.sub, recipientUsername, String(content));
+
+        const outgoing = {
+          id: dm.id,
+          content: plainContent,
+          createdAt: dm.createdAt,
+          sender: dm.sender,
+          recipientId,
+        };
+
+        // Echo to sender
+        socket.emit("dm:received", outgoing);
+
+        // Deliver to recipient's active sockets
+        const allSockets = await io.fetchSockets();
+        for (const s of allSockets) {
+          if (s.data.user?.sub === recipientId) {
+            s.emit("dm:received", outgoing);
+          }
+        }
+
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    socket.on("dm:history", async ({ withUserId }, callback) => {
+      try {
+        const userId = socket.data.user.sub;
+        const messages = await getDmHistory(userId, withUserId);
+        await markDmsRead(userId, withUserId);
+        callback?.({ ok: true, messages });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    socket.on("dm:contacts", async (_payload, callback) => {
+      try {
+        const contacts = await getDmContacts(socket.data.user.sub);
+        callback?.({ ok: true, contacts });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    // ── Quiz ──────────────────────────────────────────────────
+    socket.on("quiz:start", async ({ roomId, category, difficulty }, callback) => {
+      try {
+        const role = socket.data.user.role as string;
+        if (role !== "admin" && role !== "moderator") {
+          callback?.({ ok: false, message: "Insufficient role" });
+          return;
+        }
         await quizBotEngine.start(io, roomId, { category, difficulty });
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: String(error) });
+      }
+    });
+
+    socket.on("quiz:stop", ({ roomId }, callback) => {
+      try {
+        const role = socket.data.user.role as string;
+        if (role !== "admin" && role !== "moderator") {
+          callback?.({ ok: false, message: "Insufficient role" });
+          return;
+        }
+        quizBotEngine.stop(roomId);
+        io.to(roomId).emit("quiz:ended", { roomId, reason: "Stopped by moderator" });
         callback?.({ ok: true });
       } catch (error) {
         callback?.({ ok: false, message: String(error) });
@@ -197,7 +406,17 @@ export function buildSocketServer(httpServer: HttpServer) {
       callback?.({ ok: true, leaderboard });
     });
 
-    socket.on("disconnect", () => undefined);
+    // ── Disconnect ────────────────────────────────────────────
+    socket.on("disconnect", () => {
+      const rooms = [...socket.rooms].filter((r) => r !== socket.id);
+      setTimeout(async () => {
+        for (const roomId of rooms) {
+          const users = await getRoomUsers(io, roomId);
+          io.to(roomId).emit("room:users-updated", { roomId, users });
+          await broadcastRoomCount(io, roomId);
+        }
+      }, 200);
+    });
   });
 
   return io;

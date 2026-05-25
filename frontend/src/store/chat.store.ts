@@ -1,8 +1,9 @@
 import { create } from "zustand";
-import type { LeaderboardEntry, Message, Room } from "../types";
+import type { ConnectedUser, LeaderboardEntry, Message, Room } from "../types";
 
 type QuizState = {
   active: boolean;
+  quizRoomId?: string;
   question?: string;
   hint?: string;
   category?: string;
@@ -18,7 +19,8 @@ type ChatState = {
   rooms: Room[];
   activeRoomId: string | null;
   messagesByRoom: Record<string, Message[]>;
-  onlineUsersByRoom: Record<string, string[]>;
+  connectedUsersByRoom: Record<string, ConnectedUser[]>;
+  roomCountsByRoomId: Record<string, number>;
   typingByRoom: Record<string, string[]>;
   quiz: QuizState;
   setRooms: (rooms: Room[]) => void;
@@ -27,9 +29,11 @@ type ChatState = {
   appendMessage: (message: Message) => void;
   patchMessage: (message: Message) => void;
   removeMessage: (roomId: string, messageId: string) => void;
+  setConnectedUsers: (roomId: string, users: ConnectedUser[]) => void;
+  setRoomCount: (roomId: string, count: number) => void;
   setTyping: (roomId: string, usernames: string[]) => void;
   setLeaderboard: (entries: LeaderboardEntry[]) => void;
-  setQuizQuestion: (question: string, hint: string, category?: string, difficulty?: string) => void;
+  setQuizQuestion: (roomId: string, question: string, hint: string, category?: string, difficulty?: string) => void;
   setQuizHint: (hint: string, hintsUsed?: number) => void;
   setQuizWinner: (winner: { username: string; answer: string; points: number }) => void;
   setQuizTimeout: (answer: string) => void;
@@ -41,7 +45,8 @@ export const useChatStore = create<ChatState>((set) => ({
   rooms: [],
   activeRoomId: null,
   messagesByRoom: {},
-  onlineUsersByRoom: {},
+  connectedUsersByRoom: {},
+  roomCountsByRoomId: {},
   typingByRoom: {},
   quiz: { active: false, hintsUsed: 0, leaderboard: [] },
   setRooms: (rooms) => set({ rooms, activeRoomId: rooms[0]?.id ?? null }),
@@ -71,14 +76,19 @@ export const useChatStore = create<ChatState>((set) => ({
         [roomId]: (state.messagesByRoom[roomId] ?? []).filter((item) => item.id !== messageId)
       }
     })),
+  setConnectedUsers: (roomId, users) =>
+    set((state) => ({ connectedUsersByRoom: { ...state.connectedUsersByRoom, [roomId]: users } })),
+  setRoomCount: (roomId, count) =>
+    set((state) => ({ roomCountsByRoomId: { ...state.roomCountsByRoomId, [roomId]: count } })),
   setTyping: (roomId, usernames) =>
     set((state) => ({ typingByRoom: { ...state.typingByRoom, [roomId]: usernames } })),
   setLeaderboard: (entries) => set((state) => ({ quiz: { ...state.quiz, leaderboard: entries } })),
-  setQuizQuestion: (question, hint, category, difficulty) =>
+  setQuizQuestion: (roomId, question, hint, category, difficulty) =>
     set((state) => ({
       quiz: {
         ...state.quiz,
         active: true,
+        quizRoomId: roomId,
         question,
         hint,
         category,
@@ -98,7 +108,7 @@ export const useChatStore = create<ChatState>((set) => ({
   setQuizTimeout: (answer) =>
     set((state) => ({ quiz: { ...state.quiz, active: false, timeoutAnswer: answer } })),
   setQuizEnded: () =>
-    set((state) => ({ quiz: { ...state.quiz, active: false, question: undefined, hint: undefined } })),
+    set((state) => ({ quiz: { ...state.quiz, active: false, quizRoomId: undefined, question: undefined, hint: undefined } })),
   setQuizCloseAnswer: (close) =>
     set((state) => ({ quiz: { ...state.quiz, closeAnswer: close } }))
 }));

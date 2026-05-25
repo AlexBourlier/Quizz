@@ -1,7 +1,6 @@
-import { RoleName, RoomType } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 
-export async function listVisibleRooms(userId: string, role: RoleName) {
+export async function listVisibleRooms(userId: string, role: string) {
   const rooms = await prisma.room.findMany({
     include: {
       requiredRole: true,
@@ -13,31 +12,25 @@ export async function listVisibleRooms(userId: string, role: RoleName) {
     orderBy: { createdAt: "asc" }
   });
 
-  return rooms.filter((room) => {
-    if (role === RoleName.admin || role === RoleName.moderator) {
-      return true;
+  type R = (typeof rooms)[number];
+  return rooms.filter((room: R) => {
+    if (role === "admin" || role === "moderator") return true;
+    if (room.type === "public") return true;
+    if (room.type === "private") return room.members.length > 0;
+    if (room.type === "restricted" && room.requiredRole) {
+      return room.requiredRole.name === role;
     }
-
-    if (room.type === RoomType.public) {
-      return true;
-    }
-
-    if (room.type === RoomType.private) {
-      return room.members.length > 0;
-    }
-
-    if (room.type === RoomType.restricted && room.requiredRole) {
-      return room.requiredRole.name === role || role === RoleName.admin;
-    }
-
     return false;
   });
 }
 
 export async function createRoom(data: {
   name: string;
-  type: RoomType;
+  type: "public" | "private" | "restricted";
   requiredRole?: "admin" | "moderator" | "user";
+  rules?: string;
+  ageLimit?: number;
+  maxOccupants?: number;
 }) {
   const requiredRole = data.requiredRole
     ? await prisma.role.findUnique({ where: { name: data.requiredRole } })
@@ -47,7 +40,10 @@ export async function createRoom(data: {
     data: {
       name: data.name,
       type: data.type,
-      requiredRoleId: requiredRole?.id
+      requiredRoleId: requiredRole?.id,
+      rules: data.rules,
+      ageLimit: data.ageLimit,
+      maxOccupants: data.maxOccupants
     },
     include: { requiredRole: true }
   });
@@ -55,9 +51,7 @@ export async function createRoom(data: {
 
 export async function joinRoom(roomId: string, userId: string) {
   await prisma.roomMember.upsert({
-    where: {
-      roomId_userId: { roomId, userId }
-    },
+    where: { roomId_userId: { roomId, userId } },
     update: {},
     create: { roomId, userId }
   });
@@ -67,7 +61,7 @@ export async function leaveRoom(roomId: string, userId: string) {
   await prisma.roomMember.deleteMany({ where: { roomId, userId } });
 }
 
-export async function canAccessRoom(roomId: string, userId: string, role: RoleName) {
+export async function canAccessRoom(roomId: string, userId: string, role: string) {
   const room = await prisma.room.findUnique({
     where: { id: roomId },
     include: {
@@ -76,25 +70,12 @@ export async function canAccessRoom(roomId: string, userId: string, role: RoleNa
     }
   });
 
-  if (!room) {
-    return false;
-  }
-
-  if (role === RoleName.admin || role === RoleName.moderator) {
-    return true;
-  }
-
-  if (room.type === RoomType.public) {
-    return true;
-  }
-
-  if (room.type === RoomType.private) {
-    return room.members.length > 0;
-  }
-
-  if (room.type === RoomType.restricted && room.requiredRole) {
+  if (!room) return false;
+  if (role === "admin" || role === "moderator") return true;
+  if (room.type === "public") return true;
+  if (room.type === "private") return room.members.length > 0;
+  if (room.type === "restricted" && room.requiredRole) {
     return room.requiredRole.name === role;
   }
-
   return false;
 }

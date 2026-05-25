@@ -1,8 +1,10 @@
 import type { Socket } from "socket.io";
 import type { Server as SocketIOServer } from "socket.io";
+import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
-import { buildProgressiveHint, normalizeText } from "../utils/normalize.js";
+import { buildHintFromPositions, normalizeText } from "../utils/normalize.js";
 import { levenshteinDistance } from "../utils/fuzzy.js";
+import { createMessage } from "./messages.service.js";
 import {
   applyScore,
   createOrActivateGame,
@@ -22,12 +24,33 @@ type RoomRoundState = {
   revealedCount: number;
   hintsUsed: number;
   filters?: { category?: string; difficulty?: string };
+  shuffledIndices: number[];
   timeout?: NodeJS.Timeout;
-  hintInterval?: NodeJS.Timeout;
+  hintTimeouts: NodeJS.Timeout[];
 };
 
 const rounds = new Map<string, RoomRoundState>();
 const answerCooldown = new Map<string, number>();
+
+let cachedBotUserId: string | null | undefined = undefined;
+
+async function getBotUserId(): Promise<string | null> {
+  if (cachedBotUserId !== undefined) return cachedBotUserId;
+  const bot = await prisma.user.findUnique({
+    where: { email: "quizbot@quizztest.local" },
+    select: { id: true }
+  });
+  const id: string | null = bot?.id ?? null;
+  cachedBotUserId = id;
+  return id;
+}
+
+async function postBotMessage(io: SocketIOServer, roomId: string, content: string) {
+  const botId = await getBotUserId();
+  if (!botId) return;
+  const message = await createMessage({ roomId, userId: botId, content });
+  io.to(roomId).emit("message:new", message);
+}
 
 function cooldownKey(roomId: string, userId: string) {
   return `${roomId}:${userId}`;
@@ -41,8 +64,19 @@ function closeThreshold(value: string) {
 
 export class QuizBotEngine {
   async start(io: SocketIOServer, roomId: string, filters?: { category?: string; difficulty?: string }) {
+    this.stop(roomId); // clear any running timers before starting a new game
     const game = await createOrActivateGame(roomId);
     await this.nextQuestion(io, roomId, game.id, filters);
+  }
+
+  isRunning(roomId: string): boolean {
+    return rounds.has(roomId);
+  }
+
+  async autoStartInRoom(io: SocketIOServer, roomName: string) {
+    const room = await prisma.room.findUnique({ where: { name: roomName }, select: { id: true } });
+    if (!room || rounds.has(room.id)) return;
+    await this.start(io, room.id);
   }
 
   stop(roomId: string) {
@@ -50,7 +84,7 @@ export class QuizBotEngine {
     if (!state) return;
 
     if (state.timeout) clearTimeout(state.timeout);
-    if (state.hintInterval) clearInterval(state.hintInterval);
+    for (const t of state.hintTimeouts) clearTimeout(t);
     rounds.delete(roomId);
   }
 
@@ -104,7 +138,20 @@ export class QuizBotEngine {
       points
     });
 
-    io.to(payload.roomId).emit("quiz:leaderboard", await getLeaderboard(10));
+    const leaderboard = await getLeaderboard(5);
+    const board = leaderboard
+      .map((e: { score: number; user: { username: string } }, i: number) =>
+        `${i + 1}. ${e.user.username} — ${e.score} pts`
+      )
+      .join("\n");
+
+    await postBotMessage(
+      io,
+      payload.roomId,
+      `Bravo ${payload.username} ! La reponse etait : "${state.answer}" (+${points} pts)\n\nClassement :\n${board}`
+    );
+
+    io.to(payload.roomId).emit("quiz:leaderboard", leaderboard);
 
     setTimeout(() => {
       this.nextQuestion(io, payload.roomId, state.gameId, state.filters).catch((error) => {
@@ -125,8 +172,19 @@ export class QuizBotEngine {
     if (!question) {
       await endGame(gameId);
       io.to(roomId).emit("quiz:ended", { roomId, reason: "No questions available" });
+      await postBotMessage(io, roomId, "Quiz termine. Plus de questions disponibles.");
       return;
     }
+
+    // Pre-shuffle the positions of non-space characters so hints reveal random letters
+    const nonSpaceIndices = [...question.answer]
+      .reduce<number[]>((acc, ch, i) => { if (ch !== " ") acc.push(i); return acc; }, []);
+    for (let i = nonSpaceIndices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [nonSpaceIndices[i], nonSpaceIndices[j]] = [nonSpaceIndices[j], nonSpaceIndices[i]];
+    }
+
+    const initialHint = buildHintFromPositions(question.answer, new Set());
 
     const state: RoomRoundState = {
       gameId,
@@ -137,12 +195,12 @@ export class QuizBotEngine {
       normalizedAnswer: normalizeText(question.answer),
       revealedCount: 0,
       hintsUsed: 0,
-      filters
+      filters,
+      shuffledIndices: nonSpaceIndices,
+      hintTimeouts: [],
     };
 
     rounds.set(roomId, state);
-
-    const answerLengthWithoutSpaces = [...question.answer].filter((char) => char !== " ").length;
 
     io.to(roomId).emit("quiz:question", {
       roomId,
@@ -150,22 +208,35 @@ export class QuizBotEngine {
       question: question.question,
       category: question.category,
       difficulty: question.difficulty,
-      hint: buildProgressiveHint(question.answer, 0)
+      hint: initialHint
     });
 
-    state.hintInterval = setInterval(() => {
-      const active = rounds.get(roomId);
-      if (!active) return;
+    await postBotMessage(
+      io,
+      roomId,
+      `[${question.category}] ${question.question}\nIndice : ${initialHint}`
+    );
 
-      active.revealedCount = Math.min(active.revealedCount + 1, answerLengthWithoutSpaces);
-      active.hintsUsed += 1;
+    // Exactly 3 hints at +30s, +60s, +90s — each reveals one more random letter
+    for (let i = 1; i <= 3; i++) {
+      const t = setTimeout(() => {
+        void (async () => {
+          const active = rounds.get(roomId);
+          if (!active) return;
 
-      io.to(roomId).emit("quiz:hint", {
-        roomId,
-        hint: buildProgressiveHint(active.answer, active.revealedCount),
-        hintsUsed: active.hintsUsed
-      });
-    }, env.QUIZ_HINT_INTERVAL_MS);
+          active.revealedCount = Math.min(active.revealedCount + 1, active.shuffledIndices.length);
+          active.hintsUsed += 1;
+          const hint = buildHintFromPositions(
+            active.answer,
+            new Set(active.shuffledIndices.slice(0, active.revealedCount))
+          );
+
+          io.to(roomId).emit("quiz:hint", { roomId, hint, hintsUsed: active.hintsUsed });
+          await postBotMessage(io, roomId, `Indice : ${hint}`);
+        })().catch(console.error);
+      }, i * env.QUIZ_HINT_INTERVAL_MS);
+      state.hintTimeouts.push(t);
+    }
 
     state.timeout = setTimeout(async () => {
       const active = rounds.get(roomId);
@@ -179,10 +250,9 @@ export class QuizBotEngine {
         hintsUsed: active.hintsUsed
       });
 
-      io.to(roomId).emit("quiz:timeout", {
-        roomId,
-        answer: active.answer
-      });
+      io.to(roomId).emit("quiz:timeout", { roomId, answer: active.answer });
+
+      await postBotMessage(io, roomId, `Temps ecoule ! La reponse etait : "${active.answer}"`);
 
       setTimeout(() => {
         this.nextQuestion(io, roomId, gameId, filters).catch((error) => {

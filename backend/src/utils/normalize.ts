@@ -12,16 +12,18 @@ export function buildProgressiveHint(answer: string, revealedCount: number) {
 
   return chars
     .map((char) => {
-      if (char === " ") {
-        return " ";
-      }
-
-      if (revealed < revealedCount) {
-        revealed += 1;
-        return char;
-      }
-
+      if (char === " ") return " ";
+      if (revealed < revealedCount) { revealed += 1; return char; }
       return "*";
+    })
+    .join("");
+}
+
+export function buildHintFromPositions(answer: string, revealedPositions: Set<number>): string {
+  return [...answer]
+    .map((char, i) => {
+      if (char === " ") return " ";
+      return revealedPositions.has(i) ? char : "*";
     })
     .join("");
 }
