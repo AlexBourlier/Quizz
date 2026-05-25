@@ -1,4 +1,4 @@
-import { PrismaClient, RoleName } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcrypt";
 import { randomUUID } from "crypto";
 
@@ -7,15 +7,15 @@ const prisma = new PrismaClient();
 async function main() {
   await prisma.role.createMany({
     data: [
-      { name: RoleName.admin },
-      { name: RoleName.moderator },
-      { name: RoleName.user }
+      { name: "admin" },
+      { name: "moderator" },
+      { name: "user" }
     ],
     skipDuplicates: true
   });
 
-  const adminRole = await prisma.role.findUniqueOrThrow({ where: { name: RoleName.admin } });
-  const userRole  = await prisma.role.findUniqueOrThrow({ where: { name: RoleName.user } });
+  const adminRole = await prisma.role.findUniqueOrThrow({ where: { name: "admin" } });
+  const userRole  = await prisma.role.findUniqueOrThrow({ where: { name: "user" } });
 
   const adminPassword = await bcrypt.hash("admin12345", 12);
   await prisma.user.upsert({
