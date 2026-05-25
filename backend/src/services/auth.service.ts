@@ -72,6 +72,10 @@ export async function login(data: LoginInput) {
     throw new Error("Invalid credentials");
   }
 
+  if (user.bannedAt) {
+    throw new Error("Ce compte a été banni");
+  }
+
   const payload = toPayload(user);
   const accessToken = signAccessToken(payload);
   const refreshToken = signRefreshToken(payload);
