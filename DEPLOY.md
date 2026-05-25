@@ -94,15 +94,15 @@ source ~/nodevenv/api.votre-domaine.com/18/bin/activate
 # Vérifier
 node --version   # doit afficher v18.x ou v20.x
 
-# Installer les dépendances de production
+# Installer les dépendances de production (prisma CLI inclus dans dependencies)
 cd ~/api.votre-domaine.com
 npm install --omit=dev
 
-# Générer le client Prisma pour Linux
-npx prisma generate
+# Générer le client Prisma pour Linux (utiliser le binaire local, pas npx)
+./node_modules/.bin/prisma generate
 
 # Appliquer les migrations
-npx prisma migrate deploy
+./node_modules/.bin/prisma migrate deploy
 
 # Seed : rôles + compte admin initial
 node -e "import('./dist/prisma/seed.js').then(m => m.default())"
@@ -183,9 +183,15 @@ Si l'app n'existe pas encore dans cPanel, la créer d'abord via *Setup Node.js A
 - Vérifier que `FRONTEND_URL` dans le backend correspond **exactement** à l'URL du frontend (avec `https://`)
 - Socket.IO tombera automatiquement sur le polling HTTP si le WebSocket est bloqué
 
-### Erreur Prisma "binary not found"
+### Erreur Prisma "binary not found" ou module wasm manquant
+Utiliser le binaire local (pas npx) pour éviter les conflits de versions :
 ```bash
-npx prisma generate   # re-générer les binaires Linux
+./node_modules/.bin/prisma generate
+```
+Si l'erreur persiste, supprimer le cache npx :
+```bash
+rm -rf ~/.npm/_npx
+./node_modules/.bin/prisma generate
 ```
 
 ### Port déjà utilisé
