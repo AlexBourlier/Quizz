@@ -29,7 +29,6 @@ export function Sidebar({
   return (
     <>
       <aside className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-tide/80 p-4">
-        {/* Salons */}
         <div className="mb-3 flex items-center justify-between">
           <h2 className="font-display text-lg tracking-wide text-sky">Salons</h2>
           {userRole === "admin" && (
@@ -46,13 +45,14 @@ export function Sidebar({
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
           {rooms.map((room) => {
             const count = roomCounts[room.id];
+            const isActive = !dmMode && room.id === activeRoomId;
             return (
               <button
                 key={room.id}
                 type="button"
                 onClick={() => onSelectRoom(room.id)}
                 className={`w-full rounded-xl px-3 py-2 text-left text-sm transition ${
-                  !dmMode && room.id === activeRoomId
+                  isActive
                     ? "bg-coral text-white"
                     : "bg-panel/70 text-slate-200 hover:bg-panel"
                 }`}
@@ -64,7 +64,7 @@ export function Sidebar({
                   </span>
                   {count !== undefined && count > 0 && (
                     <span className={`rounded-full px-1.5 py-0.5 text-xs font-semibold ${
-                      !dmMode && room.id === activeRoomId ? "bg-white/20 text-white" : "bg-sky/20 text-sky"
+                      isActive ? "bg-white/20 text-white" : "bg-sky/20 text-sky"
                     }`}>
                       {count}
                     </span>
@@ -83,7 +83,6 @@ export function Sidebar({
           })}
         </div>
 
-        {/* Séparateur + onglet Messages privés */}
         <div className="mt-3 border-t border-white/10 pt-3">
           <button
             type="button"

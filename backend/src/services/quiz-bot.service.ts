@@ -14,6 +14,8 @@ import {
   saveRoundHistory
 } from "./quiz.service.js";
 
+type QuizFilters = { categories?: string[]; difficulty?: string };
+
 type RoomRoundState = {
   gameId: string;
   roomId: string;
@@ -23,7 +25,7 @@ type RoomRoundState = {
   question: string;
   revealedCount: number;
   hintsUsed: number;
-  filters?: { category?: string; difficulty?: string };
+  filters?: QuizFilters;
   shuffledIndices: number[];
   timeout?: NodeJS.Timeout;
   hintTimeouts: NodeJS.Timeout[];
@@ -63,8 +65,8 @@ function closeThreshold(value: string) {
 }
 
 export class QuizBotEngine {
-  async start(io: SocketIOServer, roomId: string, filters?: { category?: string; difficulty?: string }) {
-    this.stop(roomId); // clear any running timers before starting a new game
+  async start(io: SocketIOServer, roomId: string, filters?: QuizFilters) {
+    this.stop(roomId);
     const game = await createOrActivateGame(roomId);
     await this.nextQuestion(io, roomId, game.id, filters);
   }
@@ -82,7 +84,6 @@ export class QuizBotEngine {
   stop(roomId: string) {
     const state = rounds.get(roomId);
     if (!state) return;
-
     if (state.timeout) clearTimeout(state.timeout);
     for (const t of state.hintTimeouts) clearTimeout(t);
     rounds.delete(roomId);
@@ -95,9 +96,7 @@ export class QuizBotEngine {
     answer: string;
   }) {
     const state = rounds.get(payload.roomId);
-    if (!state) {
-      return { accepted: false, reason: "No active quiz in this room" };
-    }
+    if (!state) return { accepted: false, reason: "No active quiz in this room" };
 
     const key = cooldownKey(payload.roomId, payload.userId);
     const now = Date.now();
@@ -166,7 +165,7 @@ export class QuizBotEngine {
     io: SocketIOServer,
     roomId: string,
     gameId: string,
-    filters?: { category?: string; difficulty?: string }
+    filters?: QuizFilters
   ) {
     const question = await getRandomQuestion(filters);
     if (!question) {
@@ -176,7 +175,6 @@ export class QuizBotEngine {
       return;
     }
 
-    // Pre-shuffle the positions of non-space characters so hints reveal random letters
     const nonSpaceIndices = [...question.answer]
       .reduce<number[]>((acc, ch, i) => { if (ch !== " ") acc.push(i); return acc; }, []);
     for (let i = nonSpaceIndices.length - 1; i > 0; i--) {
@@ -197,7 +195,7 @@ export class QuizBotEngine {
       hintsUsed: 0,
       filters,
       shuffledIndices: nonSpaceIndices,
-      hintTimeouts: [],
+      hintTimeouts: []
     };
 
     rounds.set(roomId, state);
@@ -217,7 +215,7 @@ export class QuizBotEngine {
       `[${question.category}] ${question.question}\nIndice : ${initialHint}`
     );
 
-    // Exactly 3 hints at +30s, +60s, +90s — each reveals one more random letter
+    // 3 indices à +30s, +60s, +90s — positions aléatoires pré-mélangées
     for (let i = 1; i <= 3; i++) {
       const t = setTimeout(() => {
         void (async () => {
@@ -251,7 +249,6 @@ export class QuizBotEngine {
       });
 
       io.to(roomId).emit("quiz:timeout", { roomId, answer: active.answer });
-
       await postBotMessage(io, roomId, `Temps ecoule ! La reponse etait : "${active.answer}"`);
 
       setTimeout(() => {

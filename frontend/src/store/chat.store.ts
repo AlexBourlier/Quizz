@@ -24,6 +24,9 @@ type ChatState = {
   typingByRoom: Record<string, string[]>;
   quiz: QuizState;
   setRooms: (rooms: Room[]) => void;
+  addRoom: (room: Room) => void;
+  updateRoom: (room: Room) => void;
+  removeRoom: (roomId: string) => void;
   setActiveRoom: (roomId: string) => void;
   setMessages: (roomId: string, messages: Message[]) => void;
   appendMessage: (message: Message) => void;
@@ -50,6 +53,14 @@ export const useChatStore = create<ChatState>((set) => ({
   typingByRoom: {},
   quiz: { active: false, hintsUsed: 0, leaderboard: [] },
   setRooms: (rooms) => set({ rooms, activeRoomId: rooms[0]?.id ?? null }),
+  addRoom: (room) => set((state) => ({ rooms: [...state.rooms, room] })),
+  updateRoom: (room) =>
+    set((state) => ({ rooms: state.rooms.map((r) => (r.id === room.id ? room : r)) })),
+  removeRoom: (roomId) =>
+    set((state) => ({
+      rooms: state.rooms.filter((r) => r.id !== roomId),
+      activeRoomId: state.activeRoomId === roomId ? (state.rooms[0]?.id ?? null) : state.activeRoomId
+    })),
   setActiveRoom: (roomId) => set({ activeRoomId: roomId }),
   setMessages: (roomId, messages) =>
     set((state) => ({ messagesByRoom: { ...state.messagesByRoom, [roomId]: messages } })),

@@ -34,9 +34,16 @@ export function ConnectedUsers({ users, currentUserId, onDmUser }: Props) {
         ) : (
           <div className="space-y-1.5">
             {users.map((user) => {
-              const badge = ROLE_BADGE[user.role];
-              const dot = ROLE_DOT[user.role] ?? "bg-mint";
+              const isRoomMod = user.isRoomMod && user.role !== "admin" && user.role !== "moderator";
+              const badge = isRoomMod
+                ? { label: "MOD", className: "bg-sky/20 text-sky" }
+                : ROLE_BADGE[user.role];
+              const dot =
+                user.role === "admin" ? "bg-coral"
+                : user.role === "moderator" || isRoomMod ? "bg-sky"
+                : ROLE_DOT[user.role] ?? "bg-mint";
               const isSelf = user.id === currentUserId;
+
               return (
                 <div key={user.id} className="flex items-center gap-2 rounded-lg bg-ink/70 px-3 py-1.5">
                   <span className={`h-2 w-2 flex-shrink-0 rounded-full ${dot}`} />

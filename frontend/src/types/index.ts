@@ -7,6 +7,7 @@ export type User = {
   role: Role;
   color?: string | null;
   avatar?: string | null;
+  pendingAvatar?: string | null;
 };
 
 export type Room = {
@@ -39,6 +40,7 @@ export type ConnectedUser = {
   id: string;
   username: string;
   role: Role;
+  isRoomMod?: boolean;
 };
 
 export type DmContact = {
@@ -78,4 +80,18 @@ export type LeaderboardEntry = {
     username: string;
     avatar?: string | null;
   };
+};
+
+export type RoomModeratorInfo = {
+  id: string;
+  roomId: string;
+  userId: string;
+  user: { id: string; username: string; avatar?: string | null };
+};
+
+export type PendingAvatar = {
+  id: string;
+  username: string;
+  avatar?: string | null;
+  pendingAvatar: string;
 };

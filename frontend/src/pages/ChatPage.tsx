@@ -6,12 +6,13 @@ import { ChatPanel } from "../components/ChatPanel";
 import { ConnectedUsers } from "../components/ConnectedUsers";
 import { DmContactList } from "../components/DmContactList";
 import { DmConversationPanel } from "../components/DmConversationPanel";
+import { ProfileModal } from "../components/ProfileModal";
 import { QuizPanel } from "../components/QuizPanel";
 import { Sidebar } from "../components/Sidebar";
 import { useChatRealtime } from "../hooks/useChatRealtime";
 import { AppLayout } from "../layouts/AppLayout";
 import { api } from "../services/api";
-import { connectSocket, disconnectSocket } from "../sockets/chat.socket";
+import { connectSocket, disconnectSocket, getSocket } from "../sockets/chat.socket";
 import { useAuthStore } from "../store/auth.store";
 import { useChatStore } from "../store/chat.store";
 import { useDmStore } from "../store/dm.store";
@@ -23,6 +24,8 @@ export function ChatPage() {
 
   const rooms = useChatStore((state) => state.rooms);
   const setRooms = useChatStore((state) => state.setRooms);
+  const updateRoom = useChatStore((state) => state.updateRoom);
+  const removeRoom = useChatStore((state) => state.removeRoom);
   const activeRoomId = useChatStore((state) => state.activeRoomId);
   const setActiveRoom = useChatStore((state) => state.setActiveRoom);
   const messages = useChatStore((state) => (activeRoomId ? state.messagesByRoom[activeRoomId] : undefined) ?? EMPTY);
@@ -43,6 +46,7 @@ export function ChatPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [socketReady, setSocketReady] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [color, setColor] = useState(user?.color ?? "#a3e4d7");
   const colorDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -53,10 +57,17 @@ export function ChatPage() {
       socket.on("connect_error", (err) => {
         setLoadError(`Connexion socket impossible : ${err.message}`);
       });
+      // When admin invites us to a room, refresh room list
+      socket.on("room:invited", ({ room }: { room: Room }) => {
+        useChatStore.getState().addRoom(room);
+      });
     } catch (err) {
       setLoadError(`Erreur socket : ${String(err)}`);
     }
-    return () => disconnectSocket();
+    return () => {
+      getSocket()?.off("room:invited");
+      disconnectSocket();
+    };
   }, []);
 
   useEffect(() => {
@@ -120,10 +131,21 @@ export function ChatPage() {
               title={socketReady ? "Connecté" : "Connexion..."} />
           </div>
           <div className="flex items-center gap-3">
-            <p className="text-sm text-slate-300">
-              {user?.username}{" "}
-              <span className="ml-1 rounded-full bg-sky/20 px-2 py-0.5 text-xs text-sky">{user?.role}</span>
-            </p>
+            <button
+              type="button"
+              onClick={() => setShowProfile(true)}
+              className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-1.5 text-sm text-slate-200 transition hover:bg-white/5"
+            >
+              {user?.avatar ? (
+                <img src={user.avatar} alt="" className="h-5 w-5 rounded-full object-cover" />
+              ) : (
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky/20 text-xs font-bold text-sky">
+                  {user?.username?.[0]?.toUpperCase()}
+                </span>
+              )}
+              {user?.username}
+              <span className="ml-0.5 rounded-full bg-sky/20 px-1.5 py-0.5 text-xs text-sky">{user?.role}</span>
+            </button>
             <label className="flex cursor-pointer items-center gap-1.5" title="Couleur de police">
               <span className="text-xs text-slate-400">Couleur</span>
               <input
@@ -206,7 +228,14 @@ export function ChatPage() {
         </div>
       </div>
 
-      {showAdminPanel && <AdminPanel onClose={() => setShowAdminPanel(false)} />}
+      {showAdminPanel && (
+        <AdminPanel
+          onClose={() => setShowAdminPanel(false)}
+          onRoomUpdated={updateRoom}
+          onRoomDeleted={removeRoom}
+        />
+      )}
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </AppLayout>
   );
 }

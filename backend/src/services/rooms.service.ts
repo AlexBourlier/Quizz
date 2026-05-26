@@ -1,13 +1,12 @@
 import { prisma } from "../config/prisma.js";
 
+const PROTECTED_ROOMS = ["general", "quiz-arena"];
+
 export async function listVisibleRooms(userId: string, role: string) {
   const rooms = await prisma.room.findMany({
     include: {
       requiredRole: true,
-      members: {
-        where: { userId },
-        select: { id: true }
-      }
+      members: { where: { userId }, select: { id: true } }
     },
     orderBy: { createdAt: "asc" }
   });
@@ -47,6 +46,75 @@ export async function createRoom(data: {
     },
     include: { requiredRole: true }
   });
+}
+
+export async function editRoom(
+  roomId: string,
+  data: {
+    name?: string;
+    type?: "public" | "private" | "restricted";
+    rules?: string | null;
+    ageLimit?: number | null;
+    maxOccupants?: number | null;
+  }
+) {
+  const room = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
+  if (room.name === "quiz-arena") {
+    throw new Error("Le salon quiz-arena ne peut pas être modifié");
+  }
+  return prisma.room.update({
+    where: { id: roomId },
+    data,
+    include: { requiredRole: true }
+  });
+}
+
+export async function deleteRoom(roomId: string) {
+  const room = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
+  if (PROTECTED_ROOMS.includes(room.name)) {
+    throw new Error(`Le salon "${room.name}" ne peut pas être supprimé`);
+  }
+  return prisma.room.delete({ where: { id: roomId } });
+}
+
+export async function inviteUserToRoom(roomId: string, userId: string, invitedById: string) {
+  await prisma.roomInvitation.upsert({
+    where: { roomId_invitedId: { roomId, invitedId: userId } },
+    update: {},
+    create: { roomId, invitedId: userId, invitedById }
+  });
+  await prisma.roomMember.upsert({
+    where: { roomId_userId: { roomId, userId } },
+    update: {},
+    create: { roomId, userId }
+  });
+  return prisma.room.findUniqueOrThrow({ where: { id: roomId } });
+}
+
+export async function getRoomModerators(roomId: string) {
+  return prisma.roomModerator.findMany({
+    where: { roomId },
+    include: { user: { select: { id: true, username: true, avatar: true } } }
+  });
+}
+
+export async function addRoomModerator(roomId: string, userId: string) {
+  return prisma.roomModerator.upsert({
+    where: { roomId_userId: { roomId, userId } },
+    update: {},
+    create: { roomId, userId }
+  });
+}
+
+export async function removeRoomModerator(roomId: string, userId: string) {
+  return prisma.roomModerator.deleteMany({ where: { roomId, userId } });
+}
+
+export async function isRoomModerator(roomId: string, userId: string): Promise<boolean> {
+  const mod = await prisma.roomModerator.findUnique({
+    where: { roomId_userId: { roomId, userId } }
+  });
+  return !!mod;
 }
 
 export async function joinRoom(roomId: string, userId: string) {

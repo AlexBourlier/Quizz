@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "../services/api";
 import { getSocket } from "../sockets/chat.socket";
 import { useChatStore } from "../store/chat.store";
 import type { LeaderboardEntry } from "../types";
@@ -9,15 +10,26 @@ type Props = {
   leaderboard: LeaderboardEntry[];
 };
 
-const CATEGORIES = ["", "Culture générale", "Scrabble"] as const;
-
 export function QuizPanel({ roomId, canManageQuiz, leaderboard }: Props) {
   const [answer, setAnswer] = useState("");
-  const [category, setCategory] = useState<string>("");
+  const [allCategories, setAllCategories] = useState<string[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [showCatPicker, setShowCatPicker] = useState(false);
   const quiz = useChatStore((s) => s.quiz);
 
   const isThisRoom = quiz.quizRoomId === roomId;
-  const closeAnswer = quiz.closeAnswer;
+
+  useEffect(() => {
+    api.get("/quiz/categories")
+      .then(({ data }) => setAllCategories(data))
+      .catch(() => undefined);
+  }, []);
+
+  const toggleCategory = (cat: string) => {
+    setSelectedCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
+    );
+  };
 
   const sendAnswer = () => {
     if (!roomId || !answer.trim()) return;
@@ -27,7 +39,11 @@ export function QuizPanel({ roomId, canManageQuiz, leaderboard }: Props) {
 
   const startQuiz = () => {
     if (!roomId || !canManageQuiz) return;
-    getSocket()?.emit("quiz:start", { roomId, category: category || undefined });
+    getSocket()?.emit("quiz:start", {
+      roomId,
+      categories: selectedCategories.length > 0 ? selectedCategories : undefined
+    });
+    setShowCatPicker(false);
   };
 
   const stopQuiz = () => {
@@ -42,38 +58,66 @@ export function QuizPanel({ roomId, canManageQuiz, leaderboard }: Props) {
         {canManageQuiz && (
           <div className="flex items-center gap-2">
             {isThisRoom && quiz.active ? (
-              <button
-                type="button"
-                onClick={stopQuiz}
-                className="rounded-lg bg-coral px-3 py-1 text-xs font-semibold text-white transition hover:brightness-110"
-              >
+              <button type="button" onClick={stopQuiz}
+                className="rounded-lg bg-coral px-3 py-1 text-xs font-semibold text-white transition hover:brightness-110">
                 Stop
               </button>
             ) : (
-              <>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="rounded-lg border border-white/10 bg-ink px-2 py-1 text-xs text-slate-200 outline-none"
-                >
-                  {CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat || "Toutes catégories"}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={startQuiz}
-                  className="rounded-lg bg-mint px-3 py-1 text-xs font-semibold text-ink transition hover:brightness-110"
+                  onClick={() => setShowCatPicker((v) => !v)}
+                  className={`rounded-lg border px-2 py-1 text-xs transition ${
+                    selectedCategories.length > 0
+                      ? "border-sky/60 bg-sky/20 text-sky"
+                      : "border-white/10 text-slate-400 hover:text-white"
+                  }`}
+                  title="Filtrer par catégorie"
                 >
+                  {selectedCategories.length > 0
+                    ? `${selectedCategories.length} cat.`
+                    : "Catégories"}
+                </button>
+                <button type="button" onClick={startQuiz}
+                  className="rounded-lg bg-mint px-3 py-1 text-xs font-semibold text-ink transition hover:brightness-110">
                   Démarrer
                 </button>
-              </>
+              </div>
             )}
           </div>
         )}
       </div>
+
+      {/* Category picker */}
+      {showCatPicker && canManageQuiz && (
+        <div className="rounded-xl border border-white/10 bg-ink/70 p-3">
+          <p className="mb-2 text-xs text-slate-400">
+            Sélectionne les catégories (vide = toutes)
+          </p>
+          <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+            {allCategories.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => toggleCategory(cat)}
+                className={`rounded px-2 py-0.5 text-xs transition ${
+                  selectedCategories.includes(cat)
+                    ? "bg-sky text-ink font-semibold"
+                    : "bg-ink border border-white/10 text-slate-300 hover:border-sky/40"
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+          {selectedCategories.length > 0 && (
+            <button type="button" onClick={() => setSelectedCategories([])}
+              className="mt-2 text-xs text-slate-400 hover:text-white">
+              Tout désélectionner
+            </button>
+          )}
+        </div>
+      )}
 
       {isThisRoom && quiz.lastWinner && (
         <div className="rounded-xl border border-mint/30 bg-mint/10 p-3 text-sm">
@@ -111,7 +155,7 @@ export function QuizPanel({ roomId, canManageQuiz, leaderboard }: Props) {
         )}
       </div>
 
-      {isThisRoom && closeAnswer && (
+      {isThisRoom && quiz.closeAnswer && (
         <div className="rounded-xl border border-sky/30 bg-sky/10 px-3 py-2 text-xs text-sky">
           Presque ! Ta réponse est très proche...
         </div>
@@ -121,18 +165,13 @@ export function QuizPanel({ roomId, canManageQuiz, leaderboard }: Props) {
         <div className="flex gap-2">
           <input
             value={answer}
-            onChange={(event) => setAnswer(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") sendAnswer();
-            }}
+            onChange={(e) => setAnswer(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") sendAnswer(); }}
             placeholder="Ta réponse"
             className="flex-1 rounded-xl border border-white/10 bg-ink px-3 py-2 text-sm text-white outline-none ring-sky transition focus:ring-2"
           />
-          <button
-            type="button"
-            onClick={sendAnswer}
-            className="rounded-xl bg-sky px-3 py-2 text-xs font-semibold text-ink transition hover:brightness-110"
-          >
+          <button type="button" onClick={sendAnswer}
+            className="rounded-xl bg-sky px-3 py-2 text-xs font-semibold text-ink transition hover:brightness-110">
             Répondre
           </button>
         </div>
@@ -146,7 +185,12 @@ export function QuizPanel({ roomId, canManageQuiz, leaderboard }: Props) {
           <div className="space-y-1.5">
             {leaderboard.map((entry, index) => (
               <div key={entry.id} className="flex items-center justify-between rounded-lg bg-ink/70 px-3 py-1.5 text-sm">
-                <span className={`font-semibold ${index === 0 ? "text-yellow-400" : index === 1 ? "text-slate-300" : index === 2 ? "text-amber-600" : "text-slate-400"}`}>
+                <span className={`font-semibold ${
+                  index === 0 ? "text-yellow-400"
+                  : index === 1 ? "text-slate-300"
+                  : index === 2 ? "text-amber-600"
+                  : "text-slate-400"
+                }`}>
                   {index + 1}.
                 </span>
                 <span className="ml-2 flex-1 text-slate-200">{entry.user.username}</span>

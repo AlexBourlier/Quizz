@@ -3,6 +3,7 @@ import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { prisma } from "./config/prisma.js";
 import { buildSocketServer } from "./socket/chat.socket.js";
+import { checkAndResetLeaderboard } from "./services/quiz.service.js";
 
 async function bootstrap() {
   const app = createApp();
@@ -13,6 +14,10 @@ async function bootstrap() {
   httpServer.listen(env.PORT, () => {
     console.log(`Backend listening on port ${env.PORT}`);
   });
+
+  // Check monthly leaderboard reset on startup, then every hour
+  checkAndResetLeaderboard().catch(console.error);
+  setInterval(() => checkAndResetLeaderboard().catch(console.error), 60 * 60 * 1000);
 
   const shutdown = async () => {
     await prisma.$disconnect();

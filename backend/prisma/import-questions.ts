@@ -17,6 +17,18 @@ type QuestionRow = {
   difficulty: string;
 };
 
+function extractCategory(rawQuestion: string): { question: string; category: string } {
+  // Match {Category} at start of question text
+  const match = rawQuestion.match(/^\{([^}]+)\}\s*/);
+  if (match) {
+    return {
+      question: rawQuestion.slice(match[0].length).trim(),
+      category: match[1].trim()
+    };
+  }
+  return { question: rawQuestion, category: "autre" };
+}
+
 async function main() {
   const existing = await prisma.quizQuestion.count();
   if (existing > 0) {
@@ -56,14 +68,17 @@ async function main() {
     }
 
     const isScrabble = rawQuestion === "#S";
-    batch.push({
-      question: isScrabble
-        ? `Trouvez ce mot valide au Scrabble (${answer.length} lettres)`
-        : rawQuestion,
-      answer,
-      category: isScrabble ? "Scrabble" : "Culture générale",
-      difficulty: "medium",
-    });
+    if (isScrabble) {
+      batch.push({
+        question: `Trouvez ce mot valide au Scrabble (${answer.length} lettres)`,
+        answer,
+        category: "Scrabble",
+        difficulty: "medium"
+      });
+    } else {
+      const { question, category } = extractCategory(rawQuestion);
+      batch.push({ question, answer, category, difficulty: "medium" });
+    }
 
     if (batch.length >= BATCH_SIZE) {
       await prisma.quizQuestion.createMany({ data: batch });
