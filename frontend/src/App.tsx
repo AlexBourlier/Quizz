@@ -8,6 +8,15 @@ import { useAuthStore } from "./store/auth.store";
 
 export function App() {
   const token = useAuthStore((state) => state.accessToken);
+  const isReady = useAuthStore((state) => state.isReady);
+
+  if (!isReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-ink">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-sky border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <ErrorBoundary>

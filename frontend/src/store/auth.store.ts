@@ -1,14 +1,16 @@
+import axios from "axios";
 import { create } from "zustand";
-import { api } from "../services/api";
 import type { Role, User } from "../types";
 
 type AuthState = {
   user: User | null;
   accessToken: string | null;
   refreshToken: string | null;
+  isReady: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  restoreSession: () => Promise<void>;
   updateUserAndTokens: (accessToken: string, refreshToken: string) => void;
   updateColor: (color: string) => void;
   patchUser: (patch: Partial<User>) => void;
@@ -23,23 +25,89 @@ function decodeRole(token: string): Role | null {
   }
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
-  user: null,
+// ── Manual localStorage persistence ──────────────────────────────────────────
+
+const STORAGE_KEY = "quizztest-auth";
+
+function loadSession(): { user: User | null; refreshToken: string | null } {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { user: null, refreshToken: null };
+    const parsed = JSON.parse(raw);
+    return { user: parsed.user ?? null, refreshToken: parsed.refreshToken ?? null };
+  } catch {
+    return { user: null, refreshToken: null };
+  }
+}
+
+function saveSession(user: User | null, refreshToken: string | null) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ user, refreshToken }));
+  } catch { /* storage quota exceeded */ }
+}
+
+function clearSession() {
+  localStorage.removeItem(STORAGE_KEY);
+}
+
+// ── Axios instance (bare — avoids circular dep with api interceptor) ──────────
+
+const baseURL = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
+const authAxios = axios.create({ baseURL });
+
+// ── Store ─────────────────────────────────────────────────────────────────────
+
+const persisted = loadSession();
+
+export const useAuthStore = create<AuthState>()((set, get) => ({
+  user: persisted.user,
   accessToken: null,
-  refreshToken: null,
+  refreshToken: persisted.refreshToken,
+  isReady: false,
+
+  async restoreSession() {
+    const { refreshToken } = get();
+    if (!refreshToken) {
+      set({ isReady: true });
+      return;
+    }
+    try {
+      const { data } = await authAxios.post("/auth/refresh", { refreshToken });
+      set({ accessToken: data.accessToken, refreshToken: data.refreshToken, isReady: true });
+      saveSession(get().user, data.refreshToken);
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 401) {
+        // Token truly invalid — clear everything
+        clearSession();
+        set({ user: null, accessToken: null, refreshToken: null, isReady: true });
+      } else {
+        // Network error or backend down — keep token in localStorage, mark ready
+        set({ isReady: true });
+      }
+    }
+  },
 
   async login(email, password) {
-    const { data } = await api.post("/auth/login", { email, password });
-    set({ user: data.user, accessToken: data.accessToken, refreshToken: data.refreshToken });
+    const { data } = await authAxios.post("/auth/login", { email, password });
+    set({ user: data.user, accessToken: data.accessToken, refreshToken: data.refreshToken, isReady: true });
+    saveSession(data.user, data.refreshToken);
   },
 
   async register(username, email, password) {
-    const { data } = await api.post("/auth/register", { username, email, password });
-    set({ user: data.user, accessToken: data.accessToken, refreshToken: data.refreshToken });
+    const { data } = await authAxios.post("/auth/register", { username, email, password });
+    set({ user: data.user, accessToken: data.accessToken, refreshToken: data.refreshToken, isReady: true });
+    saveSession(data.user, data.refreshToken);
   },
 
   async logout() {
-    if (get().accessToken) await api.post("/auth/logout");
+    const { accessToken } = get();
+    if (accessToken) {
+      await authAxios
+        .post("/auth/logout", {}, { headers: { Authorization: `Bearer ${accessToken}` } })
+        .catch(() => undefined);
+    }
+    clearSession();
     set({ user: null, accessToken: null, refreshToken: null });
   },
 
@@ -50,17 +118,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       refreshToken,
       user: state.user && role ? { ...state.user, role } : state.user
     }));
+    saveSession(get().user, refreshToken);
   },
 
   updateColor(color: string) {
     set((state) => ({
       user: state.user ? { ...state.user, color } : state.user
     }));
+    saveSession(get().user, get().refreshToken);
   },
 
   patchUser(patch) {
     set((state) => ({
       user: state.user ? { ...state.user, ...patch } : state.user
     }));
+    saveSession(get().user, get().refreshToken);
   }
 }));
+
+// Kick off session restore once at module load — before React mounts.
+// This avoids any StrictMode double-invoke issue entirely.
+useAuthStore.getState().restoreSession();
+
