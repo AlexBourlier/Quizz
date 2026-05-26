@@ -9,7 +9,8 @@ async function bootstrap() {
   const app = createApp();
   const httpServer = http.createServer(app);
 
-  buildSocketServer(httpServer);
+  const io = buildSocketServer(httpServer);
+  app.set("io", io);
 
   httpServer.listen(env.PORT, () => {
     console.log(`Backend listening on port ${env.PORT}`);

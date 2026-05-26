@@ -11,6 +11,7 @@ type AuthState = {
   logout: () => Promise<void>;
   updateUserAndTokens: (accessToken: string, refreshToken: string) => void;
   updateColor: (color: string) => void;
+  patchUser: (patch: Partial<User>) => void;
 };
 
 function decodeRole(token: string): Role | null {
@@ -54,6 +55,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   updateColor(color: string) {
     set((state) => ({
       user: state.user ? { ...state.user, color } : state.user
+    }));
+  },
+
+  patchUser(patch) {
+    set((state) => ({
+      user: state.user ? { ...state.user, ...patch } : state.user
     }));
   }
 }));

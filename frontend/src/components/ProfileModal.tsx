@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../services/api";
 import { useAuthStore } from "../store/auth.store";
 import { useNotificationStore } from "../store/notification.store";
@@ -8,6 +8,7 @@ type Props = { onClose: () => void };
 export function ProfileModal({ onClose }: Props) {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const patchUser = useAuthStore((s) => s.patchUser);
   const { addToast } = useNotificationStore();
 
   const [username, setUsername] = useState(user?.username ?? "");
@@ -15,6 +16,18 @@ export function ProfileModal({ onClose }: Props) {
   const [pendingMessage, setPendingMessage] = useState<string | null>(
     user?.pendingAvatar ? "Avatar en attente de validation" : null
   );
+
+  // Fetch fresh profile on mount to get the latest approved avatar
+  useEffect(() => {
+    api.get("/users/me")
+      .then(({ data }) => {
+        patchUser({ avatar: data.avatar, username: data.username });
+        setPreview(data.avatar ?? null);
+        setUsername(data.username);
+        setPendingMessage(data.pendingAvatar ? "Avatar en attente de validation" : null);
+      })
+      .catch(() => undefined);
+  }, [patchUser]);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);

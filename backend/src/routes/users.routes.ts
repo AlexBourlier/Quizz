@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { updateUserColor } from "../services/moderation.service.js";
+import { prisma } from "../config/prisma.js";
 import {
   deleteAccount,
   getPendingAvatars,
@@ -12,6 +13,23 @@ import {
 
 const usersRouter = Router();
 usersRouter.use(authMiddleware);
+
+usersRouter.get("/me", async (req: Request, res: Response) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user!.sub },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      avatar: true,
+      pendingAvatar: true,
+      color: true,
+      role: { select: { name: true } }
+    }
+  });
+  if (!user) return res.status(404).json({ message: "Introuvable" });
+  return res.json({ ...user, role: user.role.name });
+});
 
 usersRouter.patch("/me/color", async (req: Request, res: Response) => {
   try {

@@ -73,6 +73,16 @@ adminRouter.get("/avatars/pending", async (_req: Request, res: Response) => {
 adminRouter.patch("/avatars/:userId/approve", async (req: Request, res: Response) => {
   try {
     const user = await approveAvatar(req.params.userId);
+    // Notify the user's active sockets in real-time
+    const io = req.app.get("io");
+    if (io) {
+      const allSockets = await io.fetchSockets();
+      for (const s of allSockets) {
+        if (s.data.user?.sub === req.params.userId) {
+          s.emit("user:profile-updated", { avatar: user.avatar });
+        }
+      }
+    }
     return res.json(user);
   } catch (err) {
     return res.status(400).json({ message: (err as Error).message });

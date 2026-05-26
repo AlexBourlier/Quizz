@@ -57,15 +57,18 @@ export function ChatPage() {
       socket.on("connect_error", (err) => {
         setLoadError(`Connexion socket impossible : ${err.message}`);
       });
-      // When admin invites us to a room, refresh room list
       socket.on("room:invited", ({ room }: { room: Room }) => {
         useChatStore.getState().addRoom(room);
+      });
+      socket.on("user:profile-updated", (patch: { avatar?: string }) => {
+        useAuthStore.getState().patchUser(patch);
       });
     } catch (err) {
       setLoadError(`Erreur socket : ${String(err)}`);
     }
     return () => {
       getSocket()?.off("room:invited");
+      getSocket()?.off("user:profile-updated");
       disconnectSocket();
     };
   }, []);
