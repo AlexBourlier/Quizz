@@ -36,8 +36,9 @@ export function LoginPage() {
             try {
               await login(email, password);
               navigate("/chat");
-            } catch {
-              setError("Identifiants invalides");
+            } catch (err: unknown) {
+              const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+              setError(msg || "Identifiants invalides");
             }
           }}
         >

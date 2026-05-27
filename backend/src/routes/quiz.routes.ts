@@ -13,13 +13,15 @@ import {
 } from "../services/suggestions.service.js";
 
 const quizRouter = Router();
-quizRouter.use(authMiddleware);
 
+// Public routes (no auth required)
 quizRouter.get("/leaderboard", leaderboardController);
 quizRouter.get("/categories", async (_req: Request, res: Response) => {
   const categories = await getCategories();
   return res.json(categories);
 });
+
+quizRouter.use(authMiddleware);
 // Direct creation kept for moderators only (bypass suggestion workflow for trusted editors)
 quizRouter.post("/questions", requireRole(["moderator"]), createQuestionController);
 quizRouter.post("/leaderboard/reset", requireRole(["admin"]), async (_req: Request, res: Response) => {
