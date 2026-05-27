@@ -82,6 +82,7 @@ async function canModerateInRoom(role, userId, roomId) {
 }
 export function buildSocketServer(httpServer) {
     const io = new Server(httpServer, {
+        path: "/api/socket.io",
         cors: { origin: env.FRONTEND_URL, credentials: true },
         transports: ["websocket", "polling"]
     });
