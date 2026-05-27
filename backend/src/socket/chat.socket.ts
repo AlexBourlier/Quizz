@@ -536,23 +536,28 @@ export function buildSocketServer(httpServer: HttpServer) {
 
     // ── Quiz ──────────────────────────────────────────────────
     socket.on("quiz:hint-request", async ({ roomId }: { roomId: string }, callback) => {
-      const now       = Date.now();
-      const last      = hintCooldown.get(roomId) ?? 0;
-      const remaining = HINT_COOLDOWN_MS - (now - last);
+      try {
+        const now       = Date.now();
+        const cooldownKey = `${socket.data.user.sub}:${roomId}`;
+        const last      = hintCooldown.get(cooldownKey) ?? 0;
+        const remaining = HINT_COOLDOWN_MS - (now - last);
 
-      if (remaining > 0) {
-        callback?.({ ok: false, message: `Indice disponible dans ${Math.ceil(remaining / 1000)} s` });
-        return;
+        if (remaining > 0) {
+          callback?.({ ok: false, message: `Indice disponible dans ${Math.ceil(remaining / 1000)} s` });
+          return;
+        }
+
+        const result = await quizBotEngine.advanceHint(io, roomId);
+        if (!result.ok) {
+          callback?.({ ok: false, message: result.reason });
+          return;
+        }
+
+        hintCooldown.set(cooldownKey, now);
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
       }
-
-      const result = await quizBotEngine.advanceHint(io, roomId);
-      if (!result.ok) {
-        callback?.({ ok: false, message: result.reason });
-        return;
-      }
-
-      hintCooldown.set(roomId, now);
-      callback?.({ ok: true });
     });
 
     socket.on("quiz:start", async ({ roomId, categories, difficulty }, callback) => {
@@ -605,14 +610,13 @@ export function buildSocketServer(httpServer: HttpServer) {
     socket.on("contact:init", async (_payload, callback) => {
       try {
         const userId = socket.data.user.sub;
-        const [pendingRequests, blockedUsers, contacts, sentPendingIds, freshUser] = await Promise.all([
+        const [pendingRequests, blockedUsers, contacts, sentPendingIds] = await Promise.all([
           getPendingRequests(userId),
           getBlockedUsers(userId),
           getContacts(userId),
           getSentPendingIds(userId),
-          prisma.user.findUnique({ where: { id: userId }, select: { role: { select: { name: true } } } }),
         ]);
-        const role = freshUser?.role.name ?? socket.data.user.role;
+        const role = socket.data.user.role;
         callback?.({ ok: true, pendingRequests, blockedUsers, contacts, sentPendingIds, role });
       } catch (error) {
         callback?.({ ok: false, message: String(error) });

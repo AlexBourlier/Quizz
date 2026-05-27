@@ -92,7 +92,7 @@ export class QuizBotEngine {
     );
 
     io.to(roomId).emit("quiz:hint", { roomId, hint, hintsUsed: state.hintsUsed });
-    await postBotMessage(io, roomId, `💡 Indice : ${hint}`);
+    await postBotMessage(io, roomId, `❓ ${state.question}\n💡 Indice : ${hint}`);
 
     return { ok: true };
   }
@@ -252,7 +252,7 @@ export class QuizBotEngine {
           );
 
           io.to(roomId).emit("quiz:hint", { roomId, hint, hintsUsed: active.hintsUsed });
-          await postBotMessage(io, roomId, `Indice : ${hint}`);
+          await postBotMessage(io, roomId, `❓ ${active.question}\n💡 Indice : ${hint}`);
         })().catch(console.error);
       }, i * env.QUIZ_HINT_INTERVAL_MS);
       state.hintTimeouts.push(t);

@@ -118,14 +118,18 @@ export async function register(
     metadata: { age, needsParentalConsent },
   });
 
-  const payload      = toPayload(user);
-  const accessToken  = signAccessToken(payload);
-  const refreshToken = signRefreshToken(payload);
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data:  { refreshTokenHash: await bcrypt.hash(refreshToken, 12) }
-  });
+  // Don't issue tokens for suspended accounts (parental consent pending)
+  let accessToken: string | null = null;
+  let refreshToken: string | null = null;
+  if (!needsParentalConsent) {
+    const payload = toPayload(user);
+    accessToken  = signAccessToken(payload);
+    refreshToken = signRefreshToken(payload);
+    await prisma.user.update({
+      where: { id: user.id },
+      data:  { refreshTokenHash: await bcrypt.hash(refreshToken, 12) }
+    });
+  }
 
   return {
     user: {

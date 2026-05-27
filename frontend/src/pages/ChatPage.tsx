@@ -68,9 +68,7 @@ export function ChatPage() {
     try {
       const socket = connectSocket();
 
-      socket.on("connect", () => {
-        setSocketReady(true);
-
+      const initContacts = () => {
         socket.emit("contact:init", {}, (res: {
           ok: boolean;
           role?: string;
@@ -90,7 +88,17 @@ export function ChatPage() {
             auth.patchUser({ role: res.role as Role });
           }
         });
+      };
+
+      socket.on("connect", () => {
+        setSocketReady(true);
+        initContacts();
       });
+
+      if (socket.connected) {
+        setSocketReady(true);
+        initContacts();
+      }
 
       socket.on("connect_error", (err) => {
         setLoadError(`Connexion socket impossible : ${err.message}`);
@@ -119,6 +127,7 @@ export function ChatPage() {
     }
     return () => {
       const s = getSocket();
+      s?.off("connect");
       s?.off("room:invited");
       s?.off("user:profile-updated");
       s?.off("contact:request-received");
@@ -179,7 +188,6 @@ export function ChatPage() {
 
   const isAdmin = user?.role === "admin";
   const isGuest = !!user?.isGuest;
-  const showQuizButton = !isGuest && !isAdmin;
 
   if (loadError) {
     return (
@@ -221,9 +229,16 @@ export function ChatPage() {
               ☰
             </button>
           )}
-          <div className="flex items-center gap-2">
-            <h1 className="font-display text-lg text-white">QuizzTest</h1>
-            <span className={`h-2 w-2 rounded-full ${socketReady ? "bg-mint" : "bg-slate-600"}`} />
+          <div className="flex min-w-0 flex-col items-center">
+            <span className="max-w-[160px] truncate text-sm font-semibold text-white">
+              {dmMode && !isGuest
+                ? (activeDmUsername ? `💬 ${activeDmUsername}` : "Messages privés")
+                : (rooms.find((r) => r.id === activeRoomId)?.name ?? "ChatQuizz")}
+            </span>
+            <span className="flex items-center gap-1 text-[10px] text-slate-500">
+              <span className={`h-1.5 w-1.5 rounded-full ${socketReady ? "bg-mint" : "bg-slate-600"}`} />
+              ChatQuizz
+            </span>
           </div>
           <button
             type="button"
@@ -248,7 +263,7 @@ export function ChatPage() {
               className="lg:hidden fixed inset-0 z-40"
               onClick={() => setMobileUserMenuOpen(false)}
             />
-            <div className="lg:hidden absolute right-4 top-16 z-50 min-w-[200px] rounded-2xl border border-white/10 bg-panel/95 p-3 shadow-xl backdrop-blur">
+            <div className="lg:hidden fixed right-4 top-16 z-50 min-w-[200px] rounded-2xl border border-white/10 bg-panel/95 p-3 shadow-xl backdrop-blur">
               <div className="mb-3 flex items-center gap-2 border-b border-white/10 pb-3">
                 {user?.avatar ? (
                   <img src={user.avatar} alt="" className="h-8 w-8 rounded-full object-cover" />
@@ -309,7 +324,7 @@ export function ChatPage() {
         {/* ── Desktop header ────────────────────────────────────────── */}
         <header className="hidden lg:flex flex-shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/10 bg-panel/80 px-4 py-3">
           <div className="flex items-center gap-3">
-            <h1 className="font-display text-2xl text-white">QuizzTest</h1>
+            <h1 className="font-display text-2xl text-white">ChatQuizz</h1>
             <span className={`h-2 w-2 rounded-full ${socketReady ? "bg-mint" : "bg-slate-600"}`}
               title={socketReady ? "Connecté" : "Connexion..."} />
           </div>

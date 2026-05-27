@@ -30,7 +30,7 @@ export function LoginPage() {
       <div className="flex min-h-[calc(100vh-2rem)] items-center justify-center">
         <AuthCard
           title="Connexion"
-          subtitle="Bienvenue sur QuizzTest"
+          subtitle="Bienvenue sur ChatQuizz"
           onSubmit={async (event) => {
             event.preventDefault();
             try {
