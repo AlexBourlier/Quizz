@@ -3,6 +3,7 @@ import { getSocket } from "../sockets/chat.socket";
 import { useAuthStore } from "../store/auth.store";
 import { useChatStore } from "../store/chat.store";
 import { useContactStore } from "../store/contact.store";
+import { LeaderboardModal } from "./LeaderboardModal";
 import { ReportModal } from "./ReportModal";
 import type { Message } from "../types";
 
@@ -11,6 +12,7 @@ type Props = {
   messages: Message[];
   typingUsers: string[];
   currentUserId?: string;
+  onQuizClick?: () => void;
 };
 
 const MOD_COMMANDS: Record<string, { event: string; help: string; desc: string }> = {
@@ -132,7 +134,7 @@ function MessageBubble({
 
 const QUIZ_ARENA_NAME = "quiz-arena";
 
-export function ChatPanel({ roomId, messages, typingUsers, currentUserId }: Props) {
+export function ChatPanel({ roomId, messages, typingUsers, currentUserId, onQuizClick }: Props) {
   const role = useAuthStore((s) => s.user?.role);
   const termsAccepted = useAuthStore((s) => !!s.user?.termsAcceptedAt);
   const connectedUsers = useChatStore((s) => roomId ? s.connectedUsersByRoom[roomId] : undefined);
@@ -142,9 +144,12 @@ export function ChatPanel({ roomId, messages, typingUsers, currentUserId }: Prop
   const rooms = useChatStore((s) => s.rooms);
   const isQuizArena = roomId ? rooms.find((r) => r.id === roomId)?.name === QUIZ_ARENA_NAME : false;
 
+  const leaderboard = useChatStore((s) => s.quiz.leaderboard);
+
   const [content, setContent] = useState("");
   const [cmdFeedback, setCmdFeedback] = useState<string | null>(null);
   const [showCmdRef, setShowCmdRef] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -157,6 +162,13 @@ export function ChatPanel({ roomId, messages, typingUsers, currentUserId }: Prop
   const sendMessage = () => {
     if (!roomId || !content.trim()) return;
     const raw = content.trim();
+
+    // /classement — available to all users in quiz-arena
+    if (raw === "/classement" && isQuizArena) {
+      setShowLeaderboard(true);
+      setContent("");
+      return;
+    }
 
     // /indice — available to all users in quiz-arena
     if (raw === "/indice" && isQuizArena) {
@@ -257,6 +269,8 @@ export function ChatPanel({ roomId, messages, typingUsers, currentUserId }: Prop
             onKeyDown={(e) => { if (e.key === "Enter") sendMessage(); }}
             placeholder={
               !termsAccepted ? "Acceptez la charte pour écrire…"
+              : isQuizArena && canModerate ? "Message, /indice, /classement, /ban…"
+              : isQuizArena ? "Message, /indice, /classement"
               : canModerate ? "Message ou /ban /timeout /kick /mod /unban"
               : "Écris ton message..."
             }
@@ -272,6 +286,16 @@ export function ChatPanel({ roomId, messages, typingUsers, currentUserId }: Prop
               /
             </button>
           )}
+          {onQuizClick && (
+            <button
+              type="button"
+              onClick={onQuizClick}
+              title="Questions Quiz"
+              className="lg:hidden rounded-xl border border-sky/30 bg-sky/10 px-3 py-2 text-sm text-sky transition hover:bg-sky/20"
+            >
+              🎯
+            </button>
+          )}
           <button
             type="button"
             onClick={sendMessage}
@@ -282,6 +306,10 @@ export function ChatPanel({ roomId, messages, typingUsers, currentUserId }: Prop
           </button>
         </div>
       </section>
+
+      {showLeaderboard && (
+        <LeaderboardModal leaderboard={leaderboard} onClose={() => setShowLeaderboard(false)} />
+      )}
 
       {reportTarget && (
         <ReportModal

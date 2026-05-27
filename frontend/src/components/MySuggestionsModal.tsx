@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../services/api";
 import type { QuizSuggestion } from "../types";
 
@@ -34,7 +35,7 @@ export function MySuggestionsModal({ onClose }: Props) {
       .finally(() => setLoading(false));
   }, []);
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
       <div className="flex w-full max-w-lg flex-col gap-4 rounded-2xl border border-white/10 bg-panel p-6 shadow-2xl">
         <div className="flex items-center justify-between">
@@ -95,6 +96,7 @@ export function MySuggestionsModal({ onClose }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
