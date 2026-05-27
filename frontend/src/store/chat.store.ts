@@ -4,6 +4,7 @@ import type { ConnectedUser, LeaderboardEntry, Message, Room } from "../types";
 type QuizState = {
   active: boolean;
   quizRoomId?: string;
+  questionId?: string;
   question?: string;
   hint?: string;
   category?: string;
@@ -36,7 +37,7 @@ type ChatState = {
   setRoomCount: (roomId: string, count: number) => void;
   setTyping: (roomId: string, usernames: string[]) => void;
   setLeaderboard: (entries: LeaderboardEntry[]) => void;
-  setQuizQuestion: (roomId: string, question: string, hint: string, category?: string, difficulty?: string) => void;
+  setQuizQuestion: (roomId: string, questionId: string, question: string, hint: string, category?: string, difficulty?: string) => void;
   setQuizHint: (hint: string, hintsUsed?: number) => void;
   setQuizWinner: (winner: { username: string; answer: string; points: number }) => void;
   setQuizTimeout: (answer: string) => void;
@@ -94,12 +95,13 @@ export const useChatStore = create<ChatState>((set) => ({
   setTyping: (roomId, usernames) =>
     set((state) => ({ typingByRoom: { ...state.typingByRoom, [roomId]: usernames } })),
   setLeaderboard: (entries) => set((state) => ({ quiz: { ...state.quiz, leaderboard: entries } })),
-  setQuizQuestion: (roomId, question, hint, category, difficulty) =>
+  setQuizQuestion: (roomId, questionId, question, hint, category, difficulty) =>
     set((state) => ({
       quiz: {
         ...state.quiz,
         active: true,
         quizRoomId: roomId,
+        questionId,
         question,
         hint,
         category,
@@ -119,7 +121,7 @@ export const useChatStore = create<ChatState>((set) => ({
   setQuizTimeout: (answer) =>
     set((state) => ({ quiz: { ...state.quiz, active: false, timeoutAnswer: answer } })),
   setQuizEnded: () =>
-    set((state) => ({ quiz: { ...state.quiz, active: false, quizRoomId: undefined, question: undefined, hint: undefined } })),
+    set((state) => ({ quiz: { ...state.quiz, active: false, quizRoomId: undefined, questionId: undefined, question: undefined, hint: undefined } })),
   setQuizCloseAnswer: (close) =>
     set((state) => ({ quiz: { ...state.quiz, closeAnswer: close } }))
 }));

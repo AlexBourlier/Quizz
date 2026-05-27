@@ -1,9 +1,8 @@
 import { create } from "zustand";
-import type { DmContact, DmMessage } from "../types";
+import type { DmMessage } from "../types";
 
 type DmState = {
   conversations: Record<string, DmMessage[]>;
-  contacts: DmContact[];
   unreadCounts: Record<string, number>;
   activeDmUserId: string | null;
   activeDmUsername: string | null;
@@ -14,29 +13,21 @@ type DmState = {
   closeDm: () => void;
   appendDmMessage: (otherUserId: string, message: DmMessage) => void;
   setDmHistory: (otherUserId: string, messages: DmMessage[]) => void;
-  setContacts: (contacts: DmContact[]) => void;
-  addContact: (contact: DmContact) => void;
   incrementUnread: (userId: string) => void;
   clearUnread: (userId: string) => void;
+  clearConversation: (userId: string) => void;
 };
 
 export const useDmStore = create<DmState>((set) => ({
   conversations: {},
-  contacts: [],
   unreadCounts: {},
   activeDmUserId: null,
   activeDmUsername: null,
   dmMode: false,
 
-  setDmMode(mode) {
-    set({ dmMode: mode });
-  },
-  openDm(userId, username) {
-    set({ activeDmUserId: userId, activeDmUsername: username });
-  },
-  closeDm() {
-    set({ activeDmUserId: null, activeDmUsername: null });
-  },
+  setDmMode(mode) { set({ dmMode: mode }); },
+  openDm(userId, username) { set({ activeDmUserId: userId, activeDmUsername: username }); },
+  closeDm() { set({ activeDmUserId: null, activeDmUsername: null }); },
   appendDmMessage(otherUserId, message) {
     set((s) => ({
       conversations: {
@@ -46,18 +37,7 @@ export const useDmStore = create<DmState>((set) => ({
     }));
   },
   setDmHistory(otherUserId, messages) {
-    set((s) => ({
-      conversations: { ...s.conversations, [otherUserId]: messages },
-    }));
-  },
-  setContacts(contacts) {
-    set({ contacts });
-  },
-  addContact(contact) {
-    set((s) => {
-      if (s.contacts.some((c) => c.id === contact.id)) return s;
-      return { contacts: [contact, ...s.contacts] };
-    });
+    set((s) => ({ conversations: { ...s.conversations, [otherUserId]: messages } }));
   },
   incrementUnread(userId) {
     set((s) => ({
@@ -69,6 +49,15 @@ export const useDmStore = create<DmState>((set) => ({
       const next = { ...s.unreadCounts };
       delete next[userId];
       return { unreadCounts: next };
+    });
+  },
+  clearConversation(userId) {
+    set((s) => {
+      const convs = { ...s.conversations };
+      delete convs[userId];
+      const unreads = { ...s.unreadCounts };
+      delete unreads[userId];
+      return { conversations: convs, unreadCounts: unreads };
     });
   },
 }));

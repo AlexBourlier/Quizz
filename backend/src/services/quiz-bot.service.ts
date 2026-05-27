@@ -75,6 +75,28 @@ export class QuizBotEngine {
     return rounds.has(roomId);
   }
 
+  async advanceHint(io: SocketIOServer, roomId: string): Promise<{ ok: boolean; reason?: string }> {
+    const state = rounds.get(roomId);
+    if (!state) return { ok: false, reason: "Aucun quiz actif dans ce salon" };
+    if (state.hintTimeouts.length === 0) return { ok: false, reason: "Plus d'indices disponibles pour cette question" };
+
+    // Cancel the next scheduled hint and trigger it immediately
+    clearTimeout(state.hintTimeouts.shift()!);
+
+    state.revealedCount = Math.min(state.revealedCount + 1, state.shuffledIndices.length);
+    state.hintsUsed    += 1;
+
+    const hint = buildHintFromPositions(
+      state.answer,
+      new Set(state.shuffledIndices.slice(0, state.revealedCount))
+    );
+
+    io.to(roomId).emit("quiz:hint", { roomId, hint, hintsUsed: state.hintsUsed });
+    await postBotMessage(io, roomId, `💡 Indice : ${hint}`);
+
+    return { ok: true };
+  }
+
   async autoStartInRoom(io: SocketIOServer, roomName: string) {
     const room = await prisma.room.findUnique({ where: { name: roomName }, select: { id: true } });
     if (!room || rounds.has(room.id)) return;

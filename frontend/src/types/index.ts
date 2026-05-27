@@ -3,11 +3,15 @@ export type Role = "admin" | "moderator" | "user";
 export type User = {
   id: string;
   username: string;
-  email: string;
+  email?: string;
   role: Role;
   color?: string | null;
   avatar?: string | null;
   pendingAvatar?: string | null;
+  termsAcceptedAt?: string | null;
+  emailVerifiedAt?: string | null;
+  isSuspended?: boolean;
+  isGuest?: boolean;
 };
 
 export type Room = {
@@ -55,6 +59,43 @@ export type DmMessage = {
   createdAt: string;
   sender: { id: string; username: string; color?: string | null };
   recipientId?: string;
+};
+
+export type SuggestionType   = "new_question" | "correction";
+export type SuggestionStatus = "pending" | "accepted" | "rejected";
+
+export type QuizSuggestion = {
+  id:           string;
+  type:         SuggestionType;
+  submitterId:  string;
+  questionId:   string | null;
+  question:     string;
+  answer:       string;
+  category:     string;
+  difficulty:   string;
+  status:       SuggestionStatus;
+  adminComment: string | null;
+  createdAt:    string;
+  submitter:    { id: string; username: string };
+  reviewer:     { id: string; username: string } | null;
+  originalQ:    { id: string; question: string; answer: string; category: string; difficulty: string } | null;
+};
+
+export type ContactStatus = "pending" | "accepted" | "rejected";
+
+export type ContactRequest = {
+  id: string;
+  senderId: string;
+  receiverId: string;
+  status: ContactStatus;
+  createdAt: string;
+  sender: { id: string; username: string; color?: string | null };
+};
+
+export type BlockedUser = {
+  id: string;
+  blockedId: string;
+  blocked: { id: string; username: string };
 };
 
 export type Report = {

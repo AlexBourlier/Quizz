@@ -4,6 +4,7 @@ import { env } from "./config/env.js";
 import { prisma } from "./config/prisma.js";
 import { buildSocketServer } from "./socket/chat.socket.js";
 import { checkAndResetLeaderboard } from "./services/quiz.service.js";
+import { scheduleCleanup } from "./cron/cleanup.cron.js";
 
 async function bootstrap() {
   const app = createApp();
@@ -19,6 +20,7 @@ async function bootstrap() {
   // Check monthly leaderboard reset on startup, then every hour
   checkAndResetLeaderboard().catch(console.error);
   setInterval(() => checkAndResetLeaderboard().catch(console.error), 60 * 60 * 1000);
+  scheduleCleanup();
 
   const shutdown = async () => {
     await prisma.$disconnect();

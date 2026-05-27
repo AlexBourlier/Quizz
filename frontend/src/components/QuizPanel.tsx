@@ -41,7 +41,7 @@ export function QuizPanel({ roomId, canManageQuiz, leaderboard }: Props) {
     if (!roomId || !canManageQuiz) return;
     getSocket()?.emit("quiz:start", {
       roomId,
-      categories: selectedCategories.length > 0 ? selectedCategories : undefined
+      categories: selectedCategories.length > 0 ? selectedCategories : undefined,
     });
     setShowCatPicker(false);
   };
@@ -74,9 +74,7 @@ export function QuizPanel({ roomId, canManageQuiz, leaderboard }: Props) {
                   }`}
                   title="Filtrer par catégorie"
                 >
-                  {selectedCategories.length > 0
-                    ? `${selectedCategories.length} cat.`
-                    : "Catégories"}
+                  {selectedCategories.length > 0 ? `${selectedCategories.length} cat.` : "Catégories"}
                 </button>
                 <button type="button" onClick={startQuiz}
                   className="rounded-lg bg-mint px-3 py-1 text-xs font-semibold text-ink transition hover:brightness-110">
@@ -91,10 +89,8 @@ export function QuizPanel({ roomId, canManageQuiz, leaderboard }: Props) {
       {/* Category picker */}
       {showCatPicker && canManageQuiz && (
         <div className="rounded-xl border border-white/10 bg-ink/70 p-3">
-          <p className="mb-2 text-xs text-slate-400">
-            Sélectionne les catégories (vide = toutes)
-          </p>
-          <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+          <p className="mb-2 text-xs text-slate-400">Sélectionne les catégories (vide = toutes)</p>
+          <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
             {allCategories.map((cat) => (
               <button
                 key={cat}
@@ -102,8 +98,8 @@ export function QuizPanel({ roomId, canManageQuiz, leaderboard }: Props) {
                 onClick={() => toggleCategory(cat)}
                 className={`rounded px-2 py-0.5 text-xs transition ${
                   selectedCategories.includes(cat)
-                    ? "bg-sky text-ink font-semibold"
-                    : "bg-ink border border-white/10 text-slate-300 hover:border-sky/40"
+                    ? "bg-sky font-semibold text-ink"
+                    : "border border-white/10 bg-ink text-slate-300 hover:border-sky/40"
                 }`}
               >
                 {cat}

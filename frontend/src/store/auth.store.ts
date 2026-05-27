@@ -8,7 +8,14 @@ type AuthState = {
   refreshToken: string | null;
   isReady: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (username: string, email: string, password: string) => Promise<void>;
+  loginAsGuest: () => Promise<void>;
+  register: (
+    username: string,
+    email: string,
+    password: string,
+    birthDate: string,
+    parentEmail?: string,
+  ) => Promise<{ needsEmailVerification: boolean; needsParentalConsent: boolean } | void>;
   logout: () => Promise<void>;
   restoreSession: () => Promise<void>;
   updateUserAndTokens: (accessToken: string, refreshToken: string) => void;
@@ -73,7 +80,20 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
     try {
       const { data } = await authAxios.post("/auth/refresh", { refreshToken });
-      set({ accessToken: data.accessToken, refreshToken: data.refreshToken, isReady: true });
+      const role = decodeRole(data.accessToken);
+      set((state) => ({
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken,
+        isReady: true,
+        user: state.user && role
+          ? {
+              ...state.user,
+              role,
+              termsAcceptedAt:  data.termsAcceptedAt  ?? state.user.termsAcceptedAt,
+              emailVerifiedAt:  data.emailVerifiedAt  ?? state.user.emailVerifiedAt,
+            }
+          : state.user,
+      }));
       saveSession(get().user, data.refreshToken);
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
@@ -94,10 +114,26 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     saveSession(data.user, data.refreshToken);
   },
 
-  async register(username, email, password) {
-    const { data } = await authAxios.post("/auth/register", { username, email, password });
+  async loginAsGuest() {
+    const { data } = await authAxios.post("/auth/guest");
     set({ user: data.user, accessToken: data.accessToken, refreshToken: data.refreshToken, isReady: true });
     saveSession(data.user, data.refreshToken);
+  },
+
+  async register(username, email, password, birthDate, parentEmail) {
+    const { data } = await authAxios.post("/auth/register", {
+      username,
+      email,
+      password,
+      birthDate,
+      ...(parentEmail ? { parentEmail } : {}),
+    });
+    set({ user: data.user, accessToken: data.accessToken, refreshToken: data.refreshToken, isReady: true });
+    saveSession(data.user, data.refreshToken);
+    return {
+      needsEmailVerification: data.needsEmailVerification ?? false,
+      needsParentalConsent:   data.needsParentalConsent   ?? false,
+    };
   },
 
   async logout() {

@@ -3,11 +3,13 @@ import { useEffect, useRef, useState } from "react";
 const EMPTY: never[] = [];
 import { AdminPanel } from "../components/AdminPanel";
 import { ChatPanel } from "../components/ChatPanel";
+import { TermsModal } from "../components/TermsModal";
 import { ConnectedUsers } from "../components/ConnectedUsers";
 import { DmContactList } from "../components/DmContactList";
 import { DmConversationPanel } from "../components/DmConversationPanel";
 import { ProfileModal } from "../components/ProfileModal";
 import { QuizPanel } from "../components/QuizPanel";
+import { QuizSuggestWidget } from "../components/QuizSuggestWidget";
 import { Sidebar } from "../components/Sidebar";
 import { useChatRealtime } from "../hooks/useChatRealtime";
 import { AppLayout } from "../layouts/AppLayout";
@@ -15,8 +17,9 @@ import { api } from "../services/api";
 import { connectSocket, disconnectSocket, getSocket } from "../sockets/chat.socket";
 import { useAuthStore } from "../store/auth.store";
 import { useChatStore } from "../store/chat.store";
+import { useContactStore } from "../store/contact.store";
 import { useDmStore } from "../store/dm.store";
-import type { Room } from "../types";
+import type { ContactRequest, DmContact, Role, Room } from "../types";
 
 export function ChatPage() {
   const user = useAuthStore((state) => state.user);
@@ -53,22 +56,66 @@ export function ChatPage() {
   useEffect(() => {
     try {
       const socket = connectSocket();
-      socket.on("connect", () => setSocketReady(true));
+
+      socket.on("connect", () => {
+        setSocketReady(true);
+
+        // Load all contact/block state once connected
+        socket.emit("contact:init", {}, (res: {
+          ok: boolean;
+          role?: string;
+          contacts?: DmContact[];
+          sentPendingIds?: string[];
+          pendingRequests?: ContactRequest[];
+          blockedUsers?: { id: string; blockedId: string; blocked: { id: string; username: string } }[];
+        }) => {
+          if (!res.ok) return;
+          const cs = useContactStore.getState();
+          cs.setContacts(res.contacts ?? []);
+          cs.setSentPendingIds(res.sentPendingIds ?? []);
+          cs.setIncomingRequests(res.pendingRequests ?? []);
+          cs.setBlockedUsers(res.blockedUsers ?? []);
+          // Sync role from DB in case JWT is stale (e.g. promoted while session was active)
+          const auth = useAuthStore.getState();
+          if (res.role && auth.user && auth.user.role !== res.role) {
+            auth.patchUser({ role: res.role as Role });
+          }
+        });
+      });
+
       socket.on("connect_error", (err) => {
         setLoadError(`Connexion socket impossible : ${err.message}`);
       });
+
       socket.on("room:invited", ({ room }: { room: Room }) => {
         useChatStore.getState().addRoom(room);
       });
       socket.on("user:profile-updated", (patch: { avatar?: string }) => {
         useAuthStore.getState().patchUser(patch);
       });
+
+      // Contact request events
+      socket.on("contact:request-received", ({ request }: { request: ContactRequest }) => {
+        useContactStore.getState().addIncomingRequest(request);
+      });
+      socket.on("contact:request-accepted", ({ contact }: { contact: DmContact }) => {
+        const cs = useContactStore.getState();
+        cs.addContact(contact);
+        cs.removeSentPendingId(contact.id);
+      });
+      socket.on("contact:request-rejected", ({ recipientId }: { recipientId: string }) => {
+        useContactStore.getState().removeSentPendingId(recipientId);
+      });
     } catch (err) {
       setLoadError(`Erreur socket : ${String(err)}`);
     }
     return () => {
-      getSocket()?.off("room:invited");
-      getSocket()?.off("user:profile-updated");
+      const s = getSocket();
+      s?.off("room:invited");
+      s?.off("user:profile-updated");
+      s?.off("contact:request-received");
+      s?.off("contact:request-accepted");
+      s?.off("contact:request-rejected");
       disconnectSocket();
     };
   }, []);
@@ -136,8 +183,8 @@ export function ChatPage() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => setShowProfile(true)}
-              className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-1.5 text-sm text-slate-200 transition hover:bg-white/5"
+              onClick={() => !user?.isGuest && setShowProfile(true)}
+              className={`flex items-center gap-2 rounded-xl border border-white/10 px-3 py-1.5 text-sm text-slate-200 transition ${user?.isGuest ? "cursor-default opacity-70" : "hover:bg-white/5"}`}
             >
               {user?.avatar ? (
                 <img src={user.avatar} alt="" className="h-5 w-5 rounded-full object-cover" />
@@ -147,17 +194,23 @@ export function ChatPage() {
                 </span>
               )}
               {user?.username}
-              <span className="ml-0.5 rounded-full bg-sky/20 px-1.5 py-0.5 text-xs text-sky">{user?.role}</span>
+              {user?.isGuest ? (
+                <span className="ml-0.5 rounded-full bg-slate-600/40 px-1.5 py-0.5 text-xs text-slate-400">invité</span>
+              ) : (
+                <span className="ml-0.5 rounded-full bg-sky/20 px-1.5 py-0.5 text-xs text-sky">{user?.role}</span>
+              )}
             </button>
-            <label className="flex cursor-pointer items-center gap-1.5" title="Couleur de police">
-              <span className="text-xs text-slate-400">Couleur</span>
-              <input
-                type="color"
-                value={color}
-                onChange={(e) => handleColorChange(e.target.value)}
-                className="h-6 w-6 cursor-pointer rounded border-0 bg-transparent p-0"
-              />
-            </label>
+            {!user?.isGuest && (
+              <label className="flex cursor-pointer items-center gap-1.5" title="Couleur de police">
+                <span className="text-xs text-slate-400">Couleur</span>
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(e) => handleColorChange(e.target.value)}
+                  className="h-6 w-6 cursor-pointer rounded border-0 bg-transparent p-0"
+                />
+              </label>
+            )}
             {user?.role === "admin" && (
               <button
                 type="button"
@@ -182,12 +235,13 @@ export function ChatPage() {
             roomCounts={roomCounts}
             dmMode={dmMode}
             totalUnread={totalUnread}
+            isGuest={user?.isGuest}
             onSelectRoom={handleRoomSelect}
             onRoomCreated={handleRoomCreated}
             onMessagesClick={() => setDmMode(true)}
           />
 
-          {dmMode ? (
+          {dmMode && !user?.isGuest ? (
             <>
               {activeDmUserId && activeDmUsername ? (
                 <DmConversationPanel
@@ -209,19 +263,25 @@ export function ChatPage() {
                 roomId={activeRoomId}
                 messages={messages}
                 typingUsers={typingUsers}
-                userRole={user?.role ?? "user"}
                 currentUserId={user?.id}
               />
               <div className="flex h-full min-h-0 flex-col gap-4">
-                {user?.role === "admin" && (
+                {user?.role === "admin" ? (
                   <div className="min-h-0 flex-1">
-                    <QuizPanel roomId={activeRoomId} leaderboard={leaderboard} canManageQuiz />
+                    <QuizPanel
+                      roomId={activeRoomId}
+                      leaderboard={leaderboard}
+                      canManageQuiz
+                    />
                   </div>
-                )}
+                ) : !user?.isGuest ? (
+                  <QuizSuggestWidget roomId={activeRoomId} />
+                ) : null}
                 <div className="min-h-0 flex-1">
                   <ConnectedUsers
                     users={connectedUsers}
                     currentUserId={user?.id}
+                    isGuest={user?.isGuest}
                     onDmUser={handleOpenDm}
                   />
                 </div>
@@ -239,6 +299,7 @@ export function ChatPage() {
         />
       )}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+      {!user?.isGuest && !user?.termsAcceptedAt && <TermsModal onAccepted={() => {}} />}
     </AppLayout>
   );
 }

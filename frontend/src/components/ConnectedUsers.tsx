@@ -1,10 +1,15 @@
 import { useState } from "react";
-import { ReportModal } from "./ReportModal";
+import { getSocket } from "../sockets/chat.socket";
+import { useAuthStore } from "../store/auth.store";
+import { useContactStore } from "../store/contact.store";
+import { useNotificationStore } from "../store/notification.store";
 import type { ConnectedUser } from "../types";
+import { ReportModal } from "./ReportModal";
 
 type Props = {
   users: ConnectedUser[];
   currentUserId?: string;
+  isGuest?: boolean;
   onDmUser?: (userId: string, username: string) => void;
 };
 
@@ -19,8 +24,76 @@ const ROLE_DOT: Record<string, string> = {
   user:      "bg-mint",
 };
 
-export function ConnectedUsers({ users, currentUserId, onDmUser }: Props) {
+type Relation = "contact" | "pending-sent" | "pending-received" | "blocked" | "none";
+
+export function ConnectedUsers({ users, currentUserId, isGuest, onDmUser }: Props) {
+  const termsAccepted = useAuthStore((s) => !!s.user?.termsAcceptedAt);
   const [reportTarget, setReportTarget] = useState<{ id: string; username: string } | null>(null);
+  const [blockConfirm, setBlockConfirm] = useState<string | null>(null);
+
+  const contacts        = useContactStore((s) => s.contacts);
+  const sentPendingIds  = useContactStore((s) => s.sentPendingIds);
+  const incomingReqs    = useContactStore((s) => s.incomingRequests);
+  const blockedUsers    = useContactStore((s) => s.blockedUsers);
+
+  const addSentPendingId   = useContactStore((s) => s.addSentPendingId);
+  const addBlockedUser     = useContactStore((s) => s.addBlockedUser);
+  const removeBlockedUser  = useContactStore((s) => s.removeBlockedUser);
+  const removeContact      = useContactStore((s) => s.removeContact);
+  const removeSentPendingId = useContactStore((s) => s.removeSentPendingId);
+  const removeIncomingRequest = useContactStore((s) => s.removeIncomingRequest);
+  const { addToast } = useNotificationStore();
+
+  const getRelation = (userId: string): Relation => {
+    if (blockedUsers.some((b) => b.blockedId === userId)) return "blocked";
+    if (contacts.some((c) => c.id === userId)) return "contact";
+    if (sentPendingIds.includes(userId)) return "pending-sent";
+    if (incomingReqs.some((r) => r.senderId === userId)) return "pending-received";
+    return "none";
+  };
+
+  const handleSendRequest = (userId: string, username: string) => {
+    const socket = getSocket();
+    if (!socket) return;
+    socket.emit("contact:send-request", { recipientId: userId }, (res: { ok: boolean; message?: string }) => {
+      if (res.ok) {
+        addSentPendingId(userId);
+        addToast("success", `Demande envoyée à ${username}`);
+      } else {
+        addToast("error", res.message ?? "Erreur");
+      }
+    });
+  };
+
+  const handleBlock = (userId: string, username: string) => {
+    const socket = getSocket();
+    if (!socket) return;
+    socket.emit("contact:block", { userId }, (res: { ok: boolean; message?: string; blockedUser?: { id: string; blockedId: string; blocked: { id: string; username: string } } }) => {
+      if (res.ok && res.blockedUser) {
+        addBlockedUser(res.blockedUser);
+        removeContact(userId);
+        removeSentPendingId(userId);
+        removeIncomingRequest(incomingReqs.find((r) => r.senderId === userId)?.id ?? "");
+        addToast("warning", `${username} est maintenant bloqué`);
+      } else {
+        addToast("error", res.message ?? "Erreur");
+      }
+      setBlockConfirm(null);
+    });
+  };
+
+  const handleUnblock = (userId: string, username: string) => {
+    const socket = getSocket();
+    if (!socket) return;
+    socket.emit("contact:unblock", { userId }, (res: { ok: boolean; message?: string }) => {
+      if (res.ok) {
+        removeBlockedUser(userId);
+        addToast("success", `${username} est débloqué`);
+      } else {
+        addToast("error", res.message ?? "Erreur");
+      }
+    });
+  };
 
   return (
     <>
@@ -43,6 +116,7 @@ export function ConnectedUsers({ users, currentUserId, onDmUser }: Props) {
                 : user.role === "moderator" || isRoomMod ? "bg-sky"
                 : ROLE_DOT[user.role] ?? "bg-mint";
               const isSelf = user.id === currentUserId;
+              const rel = isSelf ? null : getRelation(user.id);
 
               return (
                 <div key={user.id} className="flex items-center gap-2 rounded-lg bg-ink/70 px-3 py-1.5">
@@ -55,18 +129,78 @@ export function ConnectedUsers({ users, currentUserId, onDmUser }: Props) {
                   )}
                   {isSelf ? (
                     <span className="text-xs text-slate-500">vous</span>
-                  ) : (
+                  ) : isGuest ? null : (
                     <div className="flex items-center gap-1">
-                      {onDmUser && (
+                      {/* Contact / DM action */}
+                      {rel === "contact" && onDmUser && (
                         <button
                           type="button"
                           onClick={() => onDmUser(user.id, user.username)}
                           title={`Message privé à ${user.username}`}
-                          className="text-slate-500 transition hover:text-sky"
+                          className="text-slate-400 transition hover:text-sky"
                         >
                           ✉
                         </button>
                       )}
+                      {rel === "none" && (
+                        <button
+                          type="button"
+                          onClick={() => termsAccepted && handleSendRequest(user.id, user.username)}
+                          title={termsAccepted ? `Demande de contact à ${user.username}` : "Acceptez la charte pour contacter"}
+                          className={`transition ${termsAccepted ? "text-slate-400 hover:text-mint" : "cursor-not-allowed text-slate-600"}`}
+                        >
+                          +
+                        </button>
+                      )}
+                      {rel === "pending-sent" && (
+                        <span title="Demande envoyée, en attente" className="text-xs text-slate-500">⏳</span>
+                      )}
+                      {rel === "pending-received" && (
+                        <span title="Cet utilisateur vous a envoyé une demande" className="text-xs text-amber-400">!</span>
+                      )}
+
+                      {/* Block / Unblock */}
+                      {rel !== "blocked" ? (
+                        blockConfirm === user.id ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleBlock(user.id, user.username)}
+                              title="Confirmer le blocage"
+                              className="text-xs text-coral transition hover:brightness-125"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBlockConfirm(null)}
+                              className="text-xs text-slate-500 transition hover:text-white"
+                            >
+                              ✕
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setBlockConfirm(user.id)}
+                            title={`Bloquer ${user.username}`}
+                            className="text-slate-500 transition hover:text-coral"
+                          >
+                            🚫
+                          </button>
+                        )
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleUnblock(user.id, user.username)}
+                          title={`Débloquer ${user.username}`}
+                          className="text-slate-500 transition hover:text-mint"
+                        >
+                          🔓
+                        </button>
+                      )}
+
+                      {/* Report */}
                       {user.role !== "admin" && (
                         <button
                           type="button"

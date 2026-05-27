@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../services/api";
 import { useNotificationStore } from "../store/notification.store";
+import type { PendingAvatar, QuizSuggestion, Report, Room, RoomModeratorInfo } from "../types";
 import { RoomEditModal } from "./RoomEditModal";
 import { RoomInviteModal } from "./RoomInviteModal";
-import type { PendingAvatar, Report, Room, RoomModeratorInfo } from "../types";
 
-type Tab = "rooms" | "moderators" | "avatars" | "reports";
+type Tab = "rooms" | "moderators" | "avatars" | "reports" | "suggestions";
+
+const DIFF_LABEL: Record<string, string> = { easy: "Facile", medium: "Moyen", hard: "Difficile" };
 
 type RoomWithMods = Room & { moderators: RoomModeratorInfo[] };
 
@@ -20,6 +22,8 @@ export function AdminPanel({ onClose, onRoomUpdated, onRoomDeleted }: Props) {
   const [rooms, setRooms] = useState<RoomWithMods[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [pendingAvatars, setPendingAvatars] = useState<PendingAvatar[]>([]);
+  const [suggestions, setSuggestions] = useState<QuizSuggestion[]>([]);
+  const [reviewComment, setReviewComment] = useState<Record<string, string>>({});
   const [editRoom, setEditRoom] = useState<Room | null>(null);
   const [inviteRoom, setInviteRoom] = useState<Room | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -43,6 +47,11 @@ export function AdminPanel({ onClose, onRoomUpdated, onRoomDeleted }: Props) {
       api.get("/admin/avatars/pending")
         .then(({ data }) => setPendingAvatars(data))
         .catch(() => addToast("error", "Erreur avatars en attente"));
+    }
+    if (tab === "suggestions") {
+      api.get("/quiz/suggestions/pending")
+        .then(({ data }) => setSuggestions(data))
+        .catch(() => addToast("error", "Erreur chargement suggestions"));
     }
   }, [tab, addToast]);
 
@@ -108,6 +117,18 @@ export function AdminPanel({ onClose, onRoomUpdated, onRoomDeleted }: Props) {
     } catch { addToast("error", "Erreur refus"); }
   };
 
+  const reviewSuggestion = async (id: string, status: "accepted" | "rejected") => {
+    try {
+      await api.patch(`/quiz/suggestions/${id}/review`, {
+        status,
+        adminComment: reviewComment[id]?.trim() || undefined,
+      });
+      setSuggestions((prev) => prev.filter((s) => s.id !== id));
+      setReviewComment((prev) => { const next = { ...prev }; delete next[id]; return next; });
+      addToast("success", status === "accepted" ? "Suggestion acceptée" : "Suggestion refusée");
+    } catch { addToast("error", "Erreur lors de la révision"); }
+  };
+
   const resolveReport = async (reportId: string) => {
     try {
       await api.patch(`/admin/reports/${reportId}/resolve`);
@@ -120,7 +141,8 @@ export function AdminPanel({ onClose, onRoomUpdated, onRoomDeleted }: Props) {
     { key: "rooms", label: "Salons" },
     { key: "moderators", label: "Modérateurs" },
     { key: "avatars", label: "Avatars", badge: pendingAvatars.length },
-    { key: "reports", label: "Signalements", badge: reports.length }
+    { key: "reports", label: "Signalements", badge: reports.length },
+    { key: "suggestions", label: "Suggestions", badge: suggestions.length },
   ];
 
   return (
@@ -308,6 +330,82 @@ export function AdminPanel({ onClose, onRoomUpdated, onRoomDeleted }: Props) {
                           <span className="font-medium text-slate-300">Raison :</span> {report.reason}
                         </p>
                       )}
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+
+            {/* ── Suggestions de questions ── */}
+            {tab === "suggestions" && (
+              suggestions.length === 0 ? (
+                <p className="text-sm text-slate-500">Aucune suggestion en attente.</p>
+              ) : (
+                <div className="space-y-4">
+                  {suggestions.map((s) => (
+                    <div key={s.id} className="rounded-xl border border-white/10 bg-ink/70 p-4">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
+                          s.type === "new_question" ? "bg-sky/20 text-sky" : "bg-amber-400/20 text-amber-300"
+                        }`}>
+                          {s.type === "new_question" ? "Nouvelle question" : "Correction"}
+                        </span>
+                        <span className="text-xs text-slate-400">
+                          par <span className="text-slate-200">{s.submitter.username}</span>
+                        </span>
+                        <span className="ml-auto text-xs text-slate-500">
+                          {new Date(s.createdAt).toLocaleString("fr-FR")}
+                        </span>
+                      </div>
+
+                      {/* For corrections: show what was the original */}
+                      {s.type === "correction" && s.originalQ && (
+                        <div className="mb-2 rounded-lg border border-white/5 bg-panel/50 px-3 py-2 text-xs">
+                          <p className="text-slate-500">Question originale :</p>
+                          <p className="text-slate-300">{s.originalQ.question}</p>
+                          <p className="mt-1 text-slate-500">
+                            Réponse actuelle :{" "}
+                            <span className="font-mono text-coral">{s.originalQ.answer}</span>
+                          </p>
+                        </div>
+                      )}
+
+                      <p className="text-sm font-medium text-slate-200">{s.question}</p>
+                      <p className="mt-1 text-sm text-slate-400">
+                        Réponse proposée :{" "}
+                        <span className="font-mono text-mint">{s.answer}</span>
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {s.category} · {DIFF_LABEL[s.difficulty] ?? s.difficulty}
+                      </p>
+
+                      <div className="mt-3">
+                        <input
+                          value={reviewComment[s.id] ?? ""}
+                          onChange={(e) =>
+                            setReviewComment((prev) => ({ ...prev, [s.id]: e.target.value }))
+                          }
+                          placeholder="Commentaire optionnel pour l'utilisateur..."
+                          className="w-full rounded-lg border border-white/10 bg-panel px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-sky"
+                        />
+                      </div>
+
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => reviewSuggestion(s.id, "accepted")}
+                          className="flex-1 rounded-lg border border-mint/40 bg-mint/10 px-3 py-1 text-xs text-mint transition hover:bg-mint/20"
+                        >
+                          Accepter
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => reviewSuggestion(s.id, "rejected")}
+                          className="flex-1 rounded-lg border border-coral/40 bg-coral/10 px-3 py-1 text-xs text-coral transition hover:bg-coral/20"
+                        >
+                          Refuser
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

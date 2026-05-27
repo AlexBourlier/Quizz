@@ -5,6 +5,7 @@ export type JwtUserPayload = {
   sub: string;
   role: "admin" | "moderator" | "user";
   username: string;
+  isGuest?: boolean;
 };
 
 export function signAccessToken(payload: JwtUserPayload) {

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../services/api";
+import { getSocket } from "../sockets/chat.socket";
 import { useAuthStore } from "../store/auth.store";
+import { useContactStore } from "../store/contact.store";
 import { useNotificationStore } from "../store/notification.store";
 
 type Props = { onClose: () => void };
@@ -10,6 +12,22 @@ export function ProfileModal({ onClose }: Props) {
   const logout = useAuthStore((s) => s.logout);
   const patchUser = useAuthStore((s) => s.patchUser);
   const { addToast } = useNotificationStore();
+
+  const blockedUsers   = useContactStore((s) => s.blockedUsers);
+  const removeBlocked  = useContactStore((s) => s.removeBlockedUser);
+
+  const handleUnblock = (blockedId: string, username: string) => {
+    const socket = getSocket();
+    if (!socket) return;
+    socket.emit("contact:unblock", { userId: blockedId }, (res: { ok: boolean; message?: string }) => {
+      if (res.ok) {
+        removeBlocked(blockedId);
+        addToast("success", `${username} est débloqué`);
+      } else {
+        addToast("error", res.message ?? "Erreur");
+      }
+    });
+  };
 
   const [username, setUsername] = useState(user?.username ?? "");
   const [preview, setPreview] = useState<string | null>(user?.avatar ?? null);
@@ -168,6 +186,29 @@ export function ProfileModal({ onClose }: Props) {
             {savingProfile ? "Enregistrement..." : "Enregistrer le profil"}
           </button>
         </form>
+
+        {/* Blocked users */}
+        {blockedUsers.length > 0 && (
+          <div className="mt-5 border-t border-white/10 pt-4">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-coral/80">
+              Utilisateurs bloqués ({blockedUsers.length})
+            </h3>
+            <div className="space-y-1.5">
+              {blockedUsers.map((b) => (
+                <div key={b.blockedId} className="flex items-center gap-2 rounded-lg bg-coral/10 px-3 py-1.5">
+                  <span className="flex-1 truncate text-sm text-slate-300">{b.blocked.username}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleUnblock(b.blockedId, b.blocked.username)}
+                    className="rounded-lg border border-white/10 px-2 py-0.5 text-xs text-slate-400 transition hover:border-mint/40 hover:text-mint"
+                  >
+                    Débloquer
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Delete account */}
         <div className="mt-6 border-t border-white/10 pt-4">

@@ -3,7 +3,9 @@ import { disconnectSocket, getSocket } from "../sockets/chat.socket";
 import { useAuthStore } from "../store/auth.store";
 import { useChatStore } from "../store/chat.store";
 import { useDmStore } from "../store/dm.store";
+import { useContactStore } from "../store/contact.store";
 import { useNotificationStore } from "../store/notification.store";
+import { playDmSound } from "../utils/notification-sound";
 import type { ConnectedUser, DmMessage } from "../types";
 
 export function useChatRealtime() {
@@ -27,7 +29,10 @@ export function useChatRealtime() {
     const socket = getSocket();
     if (!socket) return;
 
-    socket.on("message:new", appendMessage);
+    const handleMessageNew = (msg: Parameters<typeof appendMessage>[0]) => {
+      appendMessage(msg);
+    };
+    socket.on("message:new", handleMessageNew);
     socket.on("message:updated", patchMessage);
     socket.on("message:deleted", ({ messageId }: { messageId: string }) => {
       if (!activeRoomId) return;
@@ -43,8 +48,8 @@ export function useChatRealtime() {
       setTyping(roomId, updated);
     });
 
-    socket.on("quiz:question", ({ roomId, question, hint, category, difficulty }: { roomId: string; question: string; hint: string; category: string; difficulty: string }) => {
-      setQuizQuestion(roomId, question, hint, category, difficulty);
+    socket.on("quiz:question", ({ roomId, questionId, question, hint, category, difficulty }: { roomId: string; questionId: string; question: string; hint: string; category: string; difficulty: string }) => {
+      setQuizQuestion(roomId, questionId, question, hint, category, difficulty);
     });
     socket.on("quiz:hint", ({ hint, hintsUsed }: { hint: string; hintsUsed: number }) => {
       setQuizHint(hint, hintsUsed);
@@ -89,6 +94,11 @@ export function useChatRealtime() {
       useNotificationStore.getState().addToast("success", "Félicitations ! Vous avez été promu modérateur.");
     });
 
+    socket.on("dm:conversation-deleted", ({ withUserId }: { withUserId: string }) => {
+      useDmStore.getState().clearConversation(withUserId);
+      useContactStore.getState().removeContact(withUserId);
+    });
+
     // Messages privés entrants
     socket.on("dm:received", (msg: DmMessage) => {
       const currentUserId = useAuthStore.getState().user?.id;
@@ -100,21 +110,17 @@ export function useChatRealtime() {
       const dm = useDmStore.getState();
       dm.appendDmMessage(otherUserId, msg);
 
-      // Ajouter l'expéditeur aux contacts si inconnu
-      if (msg.sender.id !== currentUserId) {
-        dm.addContact({ id: msg.sender.id, username: msg.sender.username, color: msg.sender.color });
-      }
-
-      // Incrémenter non-lus sauf si la conversation est active en mode DM
       const isViewing = dm.dmMode && dm.activeDmUserId === otherUserId;
       if (!isViewing) {
         dm.incrementUnread(otherUserId);
-        useNotificationStore.getState().addToast("info", `💬 ${msg.sender.username} : ${msg.content.slice(0, 60)}`);
+        playDmSound();
+        const preview = msg.content.startsWith("data:image/") ? "📷 Image" : msg.content.slice(0, 60);
+        useNotificationStore.getState().addToast("info", `💬 ${msg.sender.username} : ${preview}`);
       }
     });
 
     return () => {
-      socket.off("message:new", appendMessage);
+      socket.off("message:new", handleMessageNew);
       socket.off("message:updated", patchMessage);
       socket.off("message:deleted");
       socket.off("typing:update");
@@ -131,6 +137,7 @@ export function useChatRealtime() {
       socket.off("mod:kicked");
       socket.off("mod:muted");
       socket.off("mod:promoted");
+      socket.off("dm:conversation-deleted");
       socket.off("dm:received");
     };
   }, [activeRoomId, appendMessage, patchMessage, removeMessage, setConnectedUsers, setLeaderboard, setQuizCloseAnswer, setQuizEnded, setQuizHint, setQuizQuestion, setQuizTimeout, setQuizWinner, setRoomCount, setTyping]);

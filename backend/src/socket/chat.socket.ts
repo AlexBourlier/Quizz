@@ -15,7 +15,18 @@ import {
   promoteToMod,
   unbanUser
 } from "../services/moderation.service.js";
-import { getDmContacts, getDmHistory, markDmsRead, sendDm } from "../services/dm.service.js";
+import { deleteConversation, getDmContacts, getDmHistory, markDmsRead, sendDm } from "../services/dm.service.js";
+import {
+  acceptContactRequest,
+  blockUser,
+  getBlockedUsers,
+  getContacts,
+  getPendingRequests,
+  getSentPendingIds,
+  rejectContactRequest,
+  sendContactRequest,
+  unblockUser,
+} from "../services/contacts.service.js";
 import {
   canAccessRoom,
   inviteUserToRoom,
@@ -27,8 +38,33 @@ import { quizBotEngine } from "../services/quiz-bot.service.js";
 import { getLeaderboard } from "../services/quiz.service.js";
 import { verifyAccessToken } from "../utils/jwt.js";
 import { prisma } from "../config/prisma.js";
+import { logAudit } from "../services/audit.service.js";
+import { logSecurity } from "../services/security-log.service.js";
 
 const spamTracker = new Map<string, number[]>();
+// Per-socket per-minute message count (separate from the 10s spam tracker)
+const perMinuteTracker = new Map<string, number[]>();
+// /indice cooldown: key = userId:roomId → last request timestamp
+const hintCooldown = new Map<string, number>();
+const HINT_COOLDOWN_MS = 40_000;
+
+const URL_REGEX = /https?:\/\/\S+|www\.\S+\.\S+/i;
+
+function isNewAccount(createdAt: Date): boolean {
+  return Date.now() - createdAt.getTime() < env.NEW_ACCOUNT_DM_HOLD_HOURS * 3_600_000;
+}
+
+function isLinkBlocked(createdAt: Date): boolean {
+  return Date.now() - createdAt.getTime() < env.NEW_ACCOUNT_LINK_HOLD_HOURS * 3_600_000;
+}
+
+function exceedsPerMinuteLimit(socketId: string, limit = 20): boolean {
+  const now = Date.now();
+  const timeline = (perMinuteTracker.get(socketId) ?? []).filter((t) => now - t < 60_000);
+  timeline.push(now);
+  perMinuteTracker.set(socketId, timeline);
+  return timeline.length > limit;
+}
 
 async function getRoomUsers(io: Server, roomId: string) {
   const sockets = await io.in(roomId).fetchSockets();
@@ -70,6 +106,14 @@ function isSpam(socketId: string) {
   timeline.push(now);
   spamTracker.set(socketId, timeline);
   return timeline.length > 12;
+}
+
+function guardGuest(socket: { data: { user: { isGuest?: boolean } } }, callback?: (res: { ok: false; message: string }) => void): boolean {
+  if (socket.data.user.isGuest) {
+    callback?.({ ok: false, message: "Non disponible pour les comptes invités" });
+    return true;
+  }
+  return false;
 }
 
 async function canModerateInRoom(role: string, userId: string, roomId: string): Promise<boolean> {
@@ -165,6 +209,36 @@ export function buildSocketServer(httpServer: HttpServer) {
         }
 
         const user = socket.data.user;
+        const isPrivileged = user.role === "admin" || user.role === "moderator";
+
+        if (!isPrivileged && exceedsPerMinuteLimit(socket.id)) {
+          callback?.({ ok: false, message: "Vous envoyez trop de messages. Ralentissez." });
+          return;
+        }
+
+        const userRecord = await prisma.user.findUnique({
+          where: { id: user.sub },
+          select: { termsAcceptedAt: true, createdAt: true, isSuspended: true, suspendedUntil: true },
+        });
+        if (!userRecord?.termsAcceptedAt) {
+          callback?.({ ok: false, message: "Vous devez accepter la charte avant d'écrire" });
+          return;
+        }
+
+        if (userRecord.isSuspended) {
+          const msg = userRecord.suspendedUntil
+            ? `Compte suspendu jusqu'au ${userRecord.suspendedUntil.toLocaleDateString("fr-FR")}`
+            : "Compte suspendu";
+          callback?.({ ok: false, message: msg });
+          return;
+        }
+
+        const safeContent = String(content ?? "").trim();
+        if (!isPrivileged && isLinkBlocked(userRecord.createdAt) && URL_REGEX.test(safeContent)) {
+          await logSecurity({ event: "link_blocked_new_account", userId: user.sub });
+          callback?.({ ok: false, message: `Les liens sont bloqués pendant les premières ${env.NEW_ACCOUNT_LINK_HOLD_HOURS}h sur un nouveau compte` });
+          return;
+        }
 
         if (await checkBanned(user.sub)) {
           callback?.({ ok: false, message: "Compte banni" });
@@ -181,7 +255,6 @@ export function buildSocketServer(httpServer: HttpServer) {
           return;
         }
 
-        const safeContent = String(content ?? "").trim();
         if (!safeContent) {
           callback?.({ ok: false, message: "Message empty" });
           return;
@@ -254,6 +327,7 @@ export function buildSocketServer(httpServer: HttpServer) {
             s.disconnect(true);
           }
         }
+        await logAudit({ adminId: user.sub, action: "ban_user", targetUserId: banned.id });
         callback?.({ ok: true });
       } catch (error) {
         callback?.({ ok: false, message: (error as Error).message });
@@ -268,7 +342,8 @@ export function buildSocketServer(httpServer: HttpServer) {
           callback?.({ ok: false, message: "Insufficient role" });
           return;
         }
-        await unbanUser(username);
+        const unbanned = await unbanUser(username);
+        await logAudit({ adminId: user.sub, action: "unban_user", targetUserId: unbanned.id });
         callback?.({ ok: true });
       } catch (error) {
         callback?.({ ok: false, message: (error as Error).message });
@@ -326,15 +401,16 @@ export function buildSocketServer(httpServer: HttpServer) {
           callback?.({ ok: false, message: "Seul un admin peut promouvoir" });
           return;
         }
-        const { user, accessToken, refreshToken } = await promoteToMod(username);
+        const { user: promoted, accessToken, refreshToken } = await promoteToMod(username);
 
         const allSockets = await io.fetchSockets();
         for (const s of allSockets) {
-          if (s.data.user?.sub === user.id) {
+          if (s.data.user?.sub === promoted.id) {
             s.data.user = { ...s.data.user, role: "moderator" };
             s.emit("mod:promoted", { accessToken, refreshToken });
           }
         }
+        await logAudit({ adminId: socket.data.user.sub, action: "promote_user", targetUserId: promoted.id });
         callback?.({ ok: true });
       } catch (error) {
         callback?.({ ok: false, message: (error as Error).message });
@@ -373,8 +449,25 @@ export function buildSocketServer(httpServer: HttpServer) {
 
     // ── Messages privés ───────────────────────────────────────
     socket.on("dm:send", async ({ recipientUsername, content }, callback) => {
+      if (guardGuest(socket, callback)) return;
       try {
         const user = socket.data.user;
+
+        const isPrivilegedDm = user.role === "admin" || user.role === "moderator";
+        const sender = await prisma.user.findUnique({
+          where: { id: user.sub },
+          select: { createdAt: true, isSuspended: true },
+        });
+        if (sender?.isSuspended) {
+          callback?.({ ok: false, message: "Compte suspendu" });
+          return;
+        }
+        if (!isPrivilegedDm && sender && isNewAccount(sender.createdAt)) {
+          await logSecurity({ event: "dm_blocked_new_account", userId: user.sub });
+          callback?.({ ok: false, message: `Les messages privés sont bloqués pendant les premières ${env.NEW_ACCOUNT_DM_HOLD_HOURS}h après la création du compte` });
+          return;
+        }
+
         const { dm, recipientId, plainContent } = await sendDm(user.sub, recipientUsername, String(content));
 
         const outgoing = {
@@ -400,6 +493,7 @@ export function buildSocketServer(httpServer: HttpServer) {
     });
 
     socket.on("dm:history", async ({ withUserId }, callback) => {
+      if (guardGuest(socket, callback)) return;
       try {
         const userId = socket.data.user.sub;
         const messages = await getDmHistory(userId, withUserId);
@@ -410,7 +504,28 @@ export function buildSocketServer(httpServer: HttpServer) {
       }
     });
 
+    socket.on("dm:delete-conversation", async ({ withUserId }: { withUserId: string }, callback) => {
+      if (guardGuest(socket, callback)) return;
+      try {
+        const userId = socket.data.user.sub;
+        await deleteConversation(userId, withUserId);
+
+        // Notify both parties so each side clears the conversation in real time
+        socket.emit("dm:conversation-deleted", { withUserId });
+        const allSockets = await io.fetchSockets();
+        for (const s of allSockets) {
+          if (s.data.user?.sub === withUserId) {
+            s.emit("dm:conversation-deleted", { withUserId: userId });
+          }
+        }
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
     socket.on("dm:contacts", async (_payload, callback) => {
+      if (guardGuest(socket, callback)) return;
       try {
         const contacts = await getDmContacts(socket.data.user.sub);
         callback?.({ ok: true, contacts });
@@ -420,6 +535,26 @@ export function buildSocketServer(httpServer: HttpServer) {
     });
 
     // ── Quiz ──────────────────────────────────────────────────
+    socket.on("quiz:hint-request", async ({ roomId }: { roomId: string }, callback) => {
+      const now       = Date.now();
+      const last      = hintCooldown.get(roomId) ?? 0;
+      const remaining = HINT_COOLDOWN_MS - (now - last);
+
+      if (remaining > 0) {
+        callback?.({ ok: false, message: `Indice disponible dans ${Math.ceil(remaining / 1000)} s` });
+        return;
+      }
+
+      const result = await quizBotEngine.advanceHint(io, roomId);
+      if (!result.ok) {
+        callback?.({ ok: false, message: result.reason });
+        return;
+      }
+
+      hintCooldown.set(roomId, now);
+      callback?.({ ok: true });
+    });
+
     socket.on("quiz:start", async ({ roomId, categories, difficulty }, callback) => {
       try {
         const role = socket.data.user.role as string;
@@ -466,8 +601,102 @@ export function buildSocketServer(httpServer: HttpServer) {
       callback?.({ ok: true, leaderboard });
     });
 
+    // ── Contacts & blocklist ──────────────────────────────────
+    socket.on("contact:init", async (_payload, callback) => {
+      try {
+        const userId = socket.data.user.sub;
+        const [pendingRequests, blockedUsers, contacts, sentPendingIds, freshUser] = await Promise.all([
+          getPendingRequests(userId),
+          getBlockedUsers(userId),
+          getContacts(userId),
+          getSentPendingIds(userId),
+          prisma.user.findUnique({ where: { id: userId }, select: { role: { select: { name: true } } } }),
+        ]);
+        const role = freshUser?.role.name ?? socket.data.user.role;
+        callback?.({ ok: true, pendingRequests, blockedUsers, contacts, sentPendingIds, role });
+      } catch (error) {
+        callback?.({ ok: false, message: String(error) });
+      }
+    });
+
+    socket.on("contact:send-request", async ({ recipientId }: { recipientId: string }, callback) => {
+      if (guardGuest(socket, callback)) return;
+      try {
+        const sender = await prisma.user.findUnique({ where: { id: socket.data.user.sub }, select: { termsAcceptedAt: true } });
+        if (!sender?.termsAcceptedAt) {
+          callback?.({ ok: false, message: "Vous devez accepter la charte avant de contacter quelqu'un" });
+          return;
+        }
+        const request = await sendContactRequest(socket.data.user.sub, recipientId);
+        const allSockets = await io.fetchSockets();
+        for (const s of allSockets) {
+          if (s.data.user?.sub === recipientId) {
+            s.emit("contact:request-received", { request });
+          }
+        }
+        callback?.({ ok: true, request });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    socket.on("contact:accept", async ({ requestId }: { requestId: string }, callback) => {
+      if (guardGuest(socket, callback)) return;
+      try {
+        const userId = socket.data.user.sub;
+        const request = await acceptContactRequest(requestId, userId);
+        const allSockets = await io.fetchSockets();
+        for (const s of allSockets) {
+          if (s.data.user?.sub === request.senderId) {
+            s.emit("contact:request-accepted", { requestId, contact: request.sender });
+          }
+        }
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    socket.on("contact:reject", async ({ requestId }: { requestId: string }, callback) => {
+      if (guardGuest(socket, callback)) return;
+      try {
+        const senderId = await rejectContactRequest(requestId, socket.data.user.sub);
+        const allSockets = await io.fetchSockets();
+        for (const s of allSockets) {
+          if (s.data.user?.sub === senderId) {
+            s.emit("contact:request-rejected", { recipientId: socket.data.user.sub });
+          }
+        }
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    socket.on("contact:block", async ({ userId }: { userId: string }, callback) => {
+      if (guardGuest(socket, callback)) return;
+      try {
+        const result = await blockUser(socket.data.user.sub, userId);
+        callback?.({ ok: true, blockedUser: result });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
+    socket.on("contact:unblock", async ({ userId }: { userId: string }, callback) => {
+      if (guardGuest(socket, callback)) return;
+      try {
+        await unblockUser(socket.data.user.sub, userId);
+        callback?.({ ok: true });
+      } catch (error) {
+        callback?.({ ok: false, message: (error as Error).message });
+      }
+    });
+
     // ── Disconnect ────────────────────────────────────────────
     socket.on("disconnect", () => {
+      spamTracker.delete(socket.id);
+      perMinuteTracker.delete(socket.id);
       const rooms = [...socket.rooms].filter((r) => r !== socket.id);
       setTimeout(async () => {
         for (const roomId of rooms) {

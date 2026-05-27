@@ -1,22 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getSocket } from "../sockets/chat.socket";
+import { useAuthStore } from "../store/auth.store";
+import { useChatStore } from "../store/chat.store";
+import { useContactStore } from "../store/contact.store";
 import { ReportModal } from "./ReportModal";
-import type { Message, Role } from "../types";
+import type { Message } from "../types";
 
 type Props = {
   roomId: string | null;
   messages: Message[];
   typingUsers: string[];
-  userRole: Role;
   currentUserId?: string;
 };
 
-const MOD_COMMANDS: Record<string, { event: string; help: string }> = {
-  ban:     { event: "mod:ban",     help: "/ban <pseudo>" },
-  unban:   { event: "mod:unban",   help: "/unban <pseudo>" },
-  timeout: { event: "mod:timeout", help: "/timeout <pseudo> [minutes]" },
-  kick:    { event: "mod:kick",    help: "/kick <pseudo>" },
-  mod:     { event: "mod:promote", help: "/mod <pseudo>" },
+const MOD_COMMANDS: Record<string, { event: string; help: string; desc: string }> = {
+  ban:     { event: "mod:ban",     help: "/ban <pseudo>",            desc: "Bannir définitivement" },
+  unban:   { event: "mod:unban",   help: "/unban <pseudo>",          desc: "Lever le ban" },
+  timeout: { event: "mod:timeout", help: "/timeout <pseudo> [min]",  desc: "Silence temporaire (défaut 10 min)" },
+  kick:    { event: "mod:kick",    help: "/kick <pseudo>",           desc: "Expulser du salon" },
+  mod:     { event: "mod:promote", help: "/mod <pseudo>",            desc: "Promouvoir modérateur" },
 };
 
 function parseCommand(raw: string, roomId: string) {
@@ -46,16 +48,41 @@ type ReportTarget = { userId: string; username: string; content: string; created
 function MessageBubble({
   message,
   currentUserId,
+  isBlocked,
   onReport,
 }: {
   message: Message;
   currentUserId?: string;
+  isBlocked: boolean;
   onReport: (target: ReportTarget) => void;
 }) {
-  const [hovered, setHovered] = useState(false);
-  const isBot = message.user.username === "QuizBot";
+  const [hovered,   setHovered]   = useState(false);
+  const [revealed,  setRevealed]  = useState(false);
+  const isBot  = message.user.username === "QuizBot";
   const isSelf = message.user.id === currentUserId;
-  const color = usernameColor(message.user.username, message.user.color);
+  const color  = usernameColor(message.user.username, message.user.color);
+
+  if (isBlocked && !revealed) {
+    return (
+      <article className="group relative rounded-xl border border-white/5 bg-ink/40 p-3">
+        <div className="flex items-center justify-between">
+          <strong className="text-sm text-slate-500">{message.user.username}</strong>
+          <span className="text-xs text-slate-600">{new Date(message.createdAt).toLocaleTimeString()}</span>
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <span className="text-sm italic text-slate-600">Message masqué</span>
+          <button
+            type="button"
+            onClick={() => setRevealed(true)}
+            className="rounded px-1.5 py-0.5 text-[11px] text-slate-500 underline transition hover:text-slate-300"
+          >
+            Afficher
+          </button>
+        </div>
+      </article>
+    );
+  }
+
   const lines = message.content.split("\n");
 
   return (
@@ -69,15 +96,18 @@ function MessageBubble({
           {isBot && <span className="mr-1 text-xs font-normal text-amber-400/70">[BOT]</span>}
           {message.user.username}
           {isSelf && <span className="ml-1 text-xs font-normal text-slate-500">(vous)</span>}
+          {isBlocked && revealed && (
+            <span className="ml-1 text-[10px] font-normal text-slate-600">(bloqué)</span>
+          )}
         </strong>
         <div className="flex items-center gap-2">
           {hovered && !isSelf && !isBot && message.user.role !== "admin" && (
             <button
               type="button"
               onClick={() => onReport({
-                userId: message.user.id,
-                username: message.user.username,
-                content: message.content,
+                userId:    message.user.id,
+                username:  message.user.username,
+                content:   message.content,
                 createdAt: message.createdAt,
               })}
               title="Signaler ce message"
@@ -100,13 +130,25 @@ function MessageBubble({
   );
 }
 
-export function ChatPanel({ roomId, messages, typingUsers, userRole, currentUserId }: Props) {
+const QUIZ_ARENA_NAME = "quiz-arena";
+
+export function ChatPanel({ roomId, messages, typingUsers, currentUserId }: Props) {
+  const role = useAuthStore((s) => s.user?.role);
+  const termsAccepted = useAuthStore((s) => !!s.user?.termsAcceptedAt);
+  const connectedUsers = useChatStore((s) => roomId ? s.connectedUsersByRoom[roomId] : undefined);
+  const isRoomMod = connectedUsers?.find((u) => u.id === currentUserId)?.isRoomMod ?? false;
+  const blockedUsers = useContactStore((s) => s.blockedUsers);
+  const blockedIds = useMemo(() => new Set(blockedUsers.map((b) => b.blockedId)), [blockedUsers]);
+  const rooms = useChatStore((s) => s.rooms);
+  const isQuizArena = roomId ? rooms.find((r) => r.id === roomId)?.name === QUIZ_ARENA_NAME : false;
+
   const [content, setContent] = useState("");
   const [cmdFeedback, setCmdFeedback] = useState<string | null>(null);
+  const [showCmdRef, setShowCmdRef] = useState(false);
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const canModerate = userRole === "admin" || userRole === "moderator";
+  const canModerate = role === "admin" || role === "moderator" || isRoomMod;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -115,6 +157,18 @@ export function ChatPanel({ roomId, messages, typingUsers, userRole, currentUser
   const sendMessage = () => {
     if (!roomId || !content.trim()) return;
     const raw = content.trim();
+
+    // /indice — available to all users in quiz-arena
+    if (raw === "/indice" && isQuizArena) {
+      getSocket()?.emit("quiz:hint-request", { roomId }, (res: { ok: boolean; message?: string }) => {
+        if (!res.ok) {
+          setCmdFeedback(res.message ?? "Erreur");
+          setTimeout(() => setCmdFeedback(null), 4000);
+        }
+      });
+      setContent("");
+      return;
+    }
 
     if (raw.startsWith("/") && canModerate) {
       const result = parseCommand(raw, roomId);
@@ -129,12 +183,14 @@ export function ChatPanel({ roomId, messages, typingUsers, userRole, currentUser
           });
         }
         setContent("");
+        setShowCmdRef(false);
         return;
       }
     }
 
     getSocket()?.emit("message:send", { roomId, content: raw });
     setContent("");
+    setShowCmdRef(false);
   };
 
   return (
@@ -146,6 +202,7 @@ export function ChatPanel({ roomId, messages, typingUsers, userRole, currentUser
               key={message.id}
               message={message}
               currentUserId={currentUserId}
+              isBlocked={blockedIds.has(message.user.id)}
               onReport={setReportTarget}
             />
           ))}
@@ -162,11 +219,34 @@ export function ChatPanel({ roomId, messages, typingUsers, userRole, currentUser
           {typingUsers.length > 0 ? `${typingUsers.join(", ")} écrit...` : ""}
         </div>
 
+        {canModerate && showCmdRef && (
+          <div className="mb-2 rounded-xl border border-sky/20 bg-ink/80 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-sky/70">Commandes de modération</p>
+            <div className="grid grid-cols-1 gap-1">
+              {Object.entries(MOD_COMMANDS).map(([, def]) => (
+                <div key={def.event} className="flex items-baseline gap-2">
+                  <code className="w-44 flex-shrink-0 text-xs text-sky">{def.help}</code>
+                  <span className="text-xs text-slate-400">{def.desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!termsAccepted && (
+          <div className="mb-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-300">
+            Vous devez accepter la charte de bonne conduite pour écrire dans ce salon.
+          </div>
+        )}
+
         <div className="mt-1 flex gap-2">
           <input
             value={content}
+            disabled={!termsAccepted}
             onChange={(e) => {
-              setContent(e.target.value);
+              const val = e.target.value;
+              setContent(val);
+              if (canModerate) setShowCmdRef(val.startsWith("/"));
               const socket = getSocket();
               if (!roomId || !socket) return;
               socket.emit("typing:start", { roomId });
@@ -175,13 +255,28 @@ export function ChatPanel({ roomId, messages, typingUsers, userRole, currentUser
               getSocket()?.emit("typing:stop", { roomId });
             }}
             onKeyDown={(e) => { if (e.key === "Enter") sendMessage(); }}
-            placeholder={canModerate ? "Message ou /ban /timeout /kick /mod /unban" : "Écris ton message..."}
-            className="flex-1 rounded-xl border border-white/10 bg-ink px-3 py-2 text-sm text-white outline-none ring-sky transition focus:ring-2"
+            placeholder={
+              !termsAccepted ? "Acceptez la charte pour écrire…"
+              : canModerate ? "Message ou /ban /timeout /kick /mod /unban"
+              : "Écris ton message..."
+            }
+            className="flex-1 rounded-xl border border-white/10 bg-ink px-3 py-2 text-sm text-white outline-none ring-sky transition focus:ring-2 disabled:cursor-not-allowed disabled:opacity-40"
           />
+          {canModerate && (
+            <button
+              type="button"
+              onClick={() => setShowCmdRef((v) => !v)}
+              title="Commandes de modération"
+              className={`rounded-xl border px-3 py-2 text-sm transition ${showCmdRef ? "border-sky/60 bg-sky/20 text-sky" : "border-white/10 text-slate-400 hover:text-white"}`}
+            >
+              /
+            </button>
+          )}
           <button
             type="button"
             onClick={sendMessage}
-            className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110"
+            disabled={!termsAccepted}
+            className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Envoyer
           </button>

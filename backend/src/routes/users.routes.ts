@@ -32,6 +32,7 @@ usersRouter.get("/me", async (req: Request, res: Response) => {
 });
 
 usersRouter.patch("/me/color", async (req: Request, res: Response) => {
+  if (req.user!.isGuest) return res.status(403).json({ message: "Non disponible pour les comptes invités" });
   try {
     const { color } = z.object({ color: z.string() }).parse(req.body);
     await updateUserColor(req.user!.sub, color);
@@ -42,6 +43,7 @@ usersRouter.patch("/me/color", async (req: Request, res: Response) => {
 });
 
 usersRouter.patch("/me", async (req: Request, res: Response) => {
+  if (req.user!.isGuest) return res.status(403).json({ message: "Non disponible pour les comptes invités" });
   try {
     const { username } = z
       .object({ username: z.string().min(2).max(32).optional() })
@@ -54,6 +56,7 @@ usersRouter.patch("/me", async (req: Request, res: Response) => {
 });
 
 usersRouter.post("/me/avatar", async (req: Request, res: Response) => {
+  if (req.user!.isGuest) return res.status(403).json({ message: "Non disponible pour les comptes invités" });
   try {
     const { avatar } = z
       .object({ avatar: z.string().min(1) })
@@ -72,6 +75,14 @@ usersRouter.get("/pending-avatars", async (req: Request, res: Response) => {
   if (req.user!.role !== "admin") return res.status(403).json({ message: "Forbidden" });
   const pending = await getPendingAvatars();
   return res.json(pending);
+});
+
+usersRouter.post("/me/accept-terms", async (req: Request, res: Response) => {
+  await prisma.user.update({
+    where: { id: req.user!.sub },
+    data: { termsAcceptedAt: new Date() },
+  });
+  return res.json({ ok: true, termsAcceptedAt: new Date().toISOString() });
 });
 
 usersRouter.delete("/me", async (req: Request, res: Response) => {

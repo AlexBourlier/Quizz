@@ -26,6 +26,44 @@ enum QuizGameStatus {
   finished
 }
 
+enum ContactStatus {
+  pending
+  accepted
+  rejected
+}
+
+enum ReportedMsgStatus {
+  pending
+  reviewed
+  actioned
+  dismissed
+}
+
+enum AuditAction {
+  view_reported_message
+  decrypt_message
+  export_data
+  delete_message
+  ban_user
+  unban_user
+  promote_user
+  review_report
+  access_dm_history
+  rotate_encryption_key
+  modify_permissions
+}
+
+enum SuggestionType {
+  new_question
+  correction
+}
+
+enum SuggestionStatus {
+  pending
+  accepted
+  rejected
+}
+
 model Role {
   id               Int      @id @default(autoincrement())
   name             RoleName @unique
@@ -45,9 +83,22 @@ model User {
   avatar           String?            @db.Text
   pendingAvatar    String?            @db.MediumText
   color            String?            @db.VarChar(7)
-  bannedAt         DateTime?
-  mutedUntil       DateTime?
-  refreshTokenHash String?
+  bannedAt                   DateTime?
+  mutedUntil                 DateTime?
+  termsAcceptedAt            DateTime?
+  refreshTokenHash           String?
+  // Anti-fraud & minor protection
+  birthDate                  DateTime?
+  emailVerifiedAt            DateTime?
+  emailVerifyToken           String?    @db.VarChar(128)
+  emailVerifyTokenExpiresAt  DateTime?
+  isSuspended                Boolean    @default(false)
+  suspendedUntil             DateTime?
+  registrationIp             String?    @db.VarChar(64)
+  parentalConsentAt          DateTime?
+  parentalConsentToken       String?    @db.VarChar(128)
+  isGuest                    Boolean    @default(false)
+  guestExpiresAt             DateTime?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
@@ -60,10 +111,22 @@ model User {
   reactions        MessageReaction[]
   quizScores       QuizScore[]
   wonRounds        QuizRoundHistory[] @relation("RoundWinner")
-  sentDMs          PrivateMessage[]   @relation("SentDMs")
-  receivedDMs      PrivateMessage[]   @relation("ReceivedDMs")
-  reportsMade      Report[]           @relation("ReporterReports")
-  reportsReceived  Report[]           @relation("ReportedReports")
+  sentDMs                 PrivateMessage[]   @relation("SentDMs")
+  receivedDMs             PrivateMessage[]   @relation("ReceivedDMs")
+  reportsMade             Report[]           @relation("ReporterReports")
+  reportsReceived         Report[]           @relation("ReportedReports")
+  sentContactRequests     ContactRequest[]   @relation("SentContactRequests")
+  receivedContactRequests ContactRequest[]   @relation("ReceivedContactRequests")
+  blockedByMe             BlockedUser[]      @relation("BlockerRelations")
+  blockedMe               BlockedUser[]      @relation("BlockedRelations")
+  submittedSuggestions    QuizSuggestion[]   @relation("SubmittedSuggestions")
+  reviewedSuggestions     QuizSuggestion[]   @relation("ReviewedSuggestions")
+  auditLogs               AdminAuditLog[]    @relation("AuditAdmin")
+  reportedMsgsSent        ReportedMessage[]  @relation("ReportedMsgSender")
+  reportedMsgsReceived    ReportedMessage[]  @relation("ReportedMsgRecipient")
+  reportedMsgsFiled       ReportedMessage[]  @relation("ReportedMsgReporter")
+  reportedMsgsReviewed    ReportedMessage[]  @relation("ReportedMsgReviewer")
+  securityLogs            SecurityLog[]
 
   @@index([roleId])
 }
@@ -172,16 +235,76 @@ model PrivateMessage {
   id          String    @id @default(cuid())
   senderId    String
   recipientId String
-  content     String    @db.Text
-  iv          String    @db.VarChar(32)
+  content     String    @db.MediumText
+  iv          String    @db.VarChar(64)
+  authTag     String?   @db.VarChar(64)
+  keyVersion  String    @db.VarChar(16) @default("cbc-v1")
   createdAt   DateTime  @default(now())
   readAt      DateTime?
+  expiresAt   DateTime?
 
   sender      User      @relation("SentDMs",      fields: [senderId],    references: [id], onDelete: Cascade)
   recipient   User      @relation("ReceivedDMs",  fields: [recipientId], references: [id], onDelete: Cascade)
 
   @@index([senderId, recipientId, createdAt])
   @@index([recipientId, createdAt])
+  @@index([expiresAt])
+}
+
+model ReportedMessage {
+  id                String            @id @default(cuid())
+  originalMessageId String?
+  encryptedContent  String            @db.Text
+  iv                String            @db.VarChar(64)
+  authTag           String?           @db.VarChar(64)
+  keyVersion        String            @db.VarChar(16)
+  senderId          String
+  recipientId       String
+  reporterId        String
+  reason            String?           @db.Text
+  status            ReportedMsgStatus @default(pending)
+  moderatorNote     String?           @db.Text
+  reviewedById      String?
+  createdAt         DateTime          @default(now())
+  expiresAt         DateTime
+  resolvedAt        DateTime?
+
+  sender      User  @relation("ReportedMsgSender",    fields: [senderId],     references: [id], onDelete: Cascade)
+  recipient   User  @relation("ReportedMsgRecipient", fields: [recipientId],  references: [id], onDelete: Cascade)
+  reporter    User  @relation("ReportedMsgReporter",  fields: [reporterId],   references: [id], onDelete: Cascade)
+  reviewer    User? @relation("ReportedMsgReviewer",  fields: [reviewedById], references: [id])
+
+  @@index([status, expiresAt])
+  @@index([reporterId])
+}
+
+model AdminAuditLog {
+  id              String      @id @default(cuid())
+  adminId         String
+  action          AuditAction
+  targetUserId    String?
+  targetMessageId String?
+  ipAddress       String?     @db.VarChar(45)
+  reason          String?     @db.Text
+  metadata        Json?
+  createdAt       DateTime    @default(now())
+  expiresAt       DateTime
+
+  admin           User        @relation("AuditAdmin", fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([action])
+  @@index([expiresAt])
+}
+
+model EncryptionKeyVersion {
+  version    String    @id
+  algorithm  String    @db.VarChar(32) @default("aes-256-gcm")
+  isActive   Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  retiredAt  DateTime?
+
+  @@index([isActive])
 }
 
 model QuizQuestion {
@@ -195,6 +318,7 @@ model QuizQuestion {
 
   rounds           QuizRoundHistory[]
   currentInGames   QuizGame[]        @relation("CurrentQuestion")
+  suggestions      QuizSuggestion[]
 
   @@index([category, difficulty])
 }
@@ -266,4 +390,73 @@ model Report {
 
   @@index([reportedId])
   @@index([resolved])
+}
+
+model ContactRequest {
+  id         String        @id @default(cuid())
+  senderId   String
+  receiverId String
+  status     ContactStatus @default(pending)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  sender     User          @relation("SentContactRequests",     fields: [senderId],   references: [id], onDelete: Cascade)
+  receiver   User          @relation("ReceivedContactRequests", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId])
+  @@index([receiverId, status])
+}
+
+model BlockedUser {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker   User     @relation("BlockerRelations", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User     @relation("BlockedRelations", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+model QuizSuggestion {
+  id           String           @id @default(cuid())
+  type         SuggestionType
+  submitterId  String
+  questionId   String?
+  question     String           @db.Text
+  answer       String           @db.VarChar(255)
+  category     String           @db.VarChar(64)
+  difficulty   String           @db.VarChar(32)
+  status       SuggestionStatus @default(pending)
+  adminComment String?          @db.Text
+  reviewedById String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  submitter    User             @relation("SubmittedSuggestions", fields: [submitterId],  references: [id], onDelete: Cascade)
+  reviewer     User?            @relation("ReviewedSuggestions",  fields: [reviewedById], references: [id])
+  originalQ    QuizQuestion?    @relation(fields: [questionId], references: [id])
+
+  @@index([submitterId, status])
+  @@index([status])
+}
+
+model SecurityLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  event     String   @db.VarChar(64)
+  ipHash    String?  @db.VarChar(64)
+  userAgent String?  @db.VarChar(512)
+  metadata  Json?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([ipHash])
+  @@index([event, createdAt])
+  @@index([expiresAt])
 }

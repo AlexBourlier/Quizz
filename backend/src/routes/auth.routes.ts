@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  loginAsGuestController,
   loginController,
   logoutController,
   refreshController,
@@ -12,6 +13,7 @@ const authRouter = Router();
 
 authRouter.post("/register", authRateLimit, registerController);
 authRouter.post("/login", authRateLimit, loginController);
+authRouter.post("/guest", authRateLimit, loginAsGuestController);
 authRouter.post("/refresh", authRateLimit, refreshController);
 authRouter.post("/logout", authMiddleware, logoutController);
 
