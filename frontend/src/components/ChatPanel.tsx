@@ -5,6 +5,7 @@ import { useChatStore } from "../store/chat.store";
 import { useContactStore } from "../store/contact.store";
 import { LeaderboardModal } from "./LeaderboardModal";
 import { ReportModal } from "./ReportModal";
+import { UserActionModal } from "./UserActionModal";
 import type { Message } from "../types";
 
 type Props = {
@@ -13,6 +14,7 @@ type Props = {
   typingUsers: string[];
   currentUserId?: string;
   onQuizClick?: () => void;
+  onDmUser?: (userId: string, username: string) => void;
 };
 
 const MOD_COMMANDS: Record<string, { event: string; help: string; desc: string }> = {
@@ -46,17 +48,20 @@ function usernameColor(username: string, userColor?: string | null) {
 }
 
 type ReportTarget = { userId: string; username: string; content: string; createdAt: string };
+type UserActionTarget = { userId: string; username: string; userRole: string; messageContent?: string; messageAt?: string };
 
 function MessageBubble({
   message,
   currentUserId,
   isBlocked,
   onReport,
+  onUserClick,
 }: {
   message: Message;
   currentUserId?: string;
   isBlocked: boolean;
   onReport: (target: ReportTarget) => void;
+  onUserClick: (target: UserActionTarget) => void;
 }) {
   const [hovered,   setHovered]   = useState(false);
   const [revealed,  setRevealed]  = useState(false);
@@ -94,7 +99,17 @@ function MessageBubble({
       onMouseLeave={() => setHovered(false)}
     >
       <div className="mb-1 flex items-center justify-between">
-        <strong className="text-sm" style={color ? { color } : undefined}>
+        <strong
+          className={`text-sm ${!isSelf && !isBot ? "cursor-pointer hover:underline" : ""}`}
+          style={color ? { color } : undefined}
+          onClick={!isSelf && !isBot ? () => onUserClick({
+            userId: message.user.id,
+            username: message.user.username,
+            userRole: message.user.role ?? "user",
+            messageContent: message.content,
+            messageAt: message.createdAt,
+          }) : undefined}
+        >
           {isBot && <span className="mr-1 text-xs font-normal text-amber-400/70">[BOT]</span>}
           {message.user.username}
           {isSelf && <span className="ml-1 text-xs font-normal text-slate-500">(vous)</span>}
@@ -134,7 +149,7 @@ function MessageBubble({
 
 const QUIZ_ARENA_NAME = "quiz-arena";
 
-export function ChatPanel({ roomId, messages, typingUsers, currentUserId, onQuizClick }: Props) {
+export function ChatPanel({ roomId, messages, typingUsers, currentUserId, onQuizClick, onDmUser }: Props) {
   const role = useAuthStore((s) => s.user?.role);
   const termsAccepted = useAuthStore((s) => !!s.user?.termsAcceptedAt);
   const connectedUsers = useChatStore((s) => roomId ? s.connectedUsersByRoom[roomId] : undefined);
@@ -151,6 +166,7 @@ export function ChatPanel({ roomId, messages, typingUsers, currentUserId, onQuiz
   const [showCmdRef, setShowCmdRef] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
+  const [userActionTarget, setUserActionTarget] = useState<UserActionTarget | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const canModerate = role === "admin" || role === "moderator" || isRoomMod;
@@ -216,6 +232,7 @@ export function ChatPanel({ roomId, messages, typingUsers, currentUserId, onQuiz
               currentUserId={currentUserId}
               isBlocked={blockedIds.has(message.user.id)}
               onReport={setReportTarget}
+              onUserClick={setUserActionTarget}
             />
           ))}
           <div ref={bottomRef} />
@@ -319,6 +336,19 @@ export function ChatPanel({ roomId, messages, typingUsers, currentUserId, onQuiz
           messageContent={reportTarget.content}
           messageAt={reportTarget.createdAt}
           onClose={() => setReportTarget(null)}
+        />
+      )}
+
+      {userActionTarget && (
+        <UserActionModal
+          userId={userActionTarget.userId}
+          username={userActionTarget.username}
+          userRole={userActionTarget.userRole}
+          roomId={roomId ?? undefined}
+          messageContent={userActionTarget.messageContent}
+          messageAt={userActionTarget.messageAt}
+          onClose={() => setUserActionTarget(null)}
+          onDm={onDmUser ? () => onDmUser(userActionTarget.userId, userActionTarget.username) : undefined}
         />
       )}
     </>

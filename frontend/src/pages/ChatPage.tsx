@@ -536,6 +536,7 @@ export function ChatPage() {
                 typingUsers={typingUsers}
                 currentUserId={user?.id}
                 onQuizClick={!isGuest ? () => setMobileQuizOpen(true) : undefined}
+                onDmUser={!isGuest ? handleOpenDm : undefined}
               />
               {/* Desktop right column only */}
               <div className="hidden lg:flex h-full min-h-0 flex-col gap-4">
@@ -555,6 +556,7 @@ export function ChatPage() {
                     users={connectedUsers}
                     currentUserId={user?.id}
                     isGuest={isGuest}
+                    roomId={activeRoomId ?? undefined}
                     onDmUser={handleOpenDm}
                   />
                 </div>

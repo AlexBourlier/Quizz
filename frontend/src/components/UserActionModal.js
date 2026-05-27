@@ -1,0 +1,102 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { useState } from "react";
+import { getSocket } from "../sockets/chat.socket";
+import { useAuthStore } from "../store/auth.store";
+import { useContactStore } from "../store/contact.store";
+import { useNotificationStore } from "../store/notification.store";
+import { ReportModal } from "./ReportModal";
+const ROLE_BADGE = {
+    admin: { label: "ADM", className: "bg-coral/20 text-coral" },
+    moderator: { label: "MOD", className: "bg-sky/20 text-sky" },
+};
+export function UserActionModal({ userId, username, userRole, roomId, messageContent, messageAt, onClose, onDm }) {
+    const currentUserId = useAuthStore((s) => s.user?.id);
+    const currentRole = useAuthStore((s) => s.user?.role);
+    const isGuest = useAuthStore((s) => s.user?.isGuest);
+    const termsAccepted = useAuthStore((s) => !!s.user?.termsAcceptedAt);
+    const contacts = useContactStore((s) => s.contacts);
+    const sentPendingIds = useContactStore((s) => s.sentPendingIds);
+    const incomingReqs = useContactStore((s) => s.incomingRequests);
+    const blockedUsers = useContactStore((s) => s.blockedUsers);
+    const addSentPendingId = useContactStore((s) => s.addSentPendingId);
+    const addBlockedUser = useContactStore((s) => s.addBlockedUser);
+    const removeBlockedUser = useContactStore((s) => s.removeBlockedUser);
+    const removeContact = useContactStore((s) => s.removeContact);
+    const removeSentPendingId = useContactStore((s) => s.removeSentPendingId);
+    const removeIncomingRequest = useContactStore((s) => s.removeIncomingRequest);
+    const { addToast } = useNotificationStore();
+    const [showReport, setShowReport] = useState(false);
+    const [confirmBlock, setConfirmBlock] = useState(false);
+    const [cmdFeedback, setCmdFeedback] = useState(null);
+    const isBlocked = blockedUsers.some((b) => b.blockedId === userId);
+    const isContact = contacts.some((c) => c.id === userId);
+    const isPendingSent = sentPendingIds.includes(userId);
+    const isPendingIncoming = incomingReqs.some((r) => r.senderId === userId);
+    const canModerate = currentRole === "admin" || currentRole === "moderator";
+    const isAdmin = userRole === "admin";
+    const handleAddContact = () => {
+        const socket = getSocket();
+        if (!socket || !termsAccepted)
+            return;
+        socket.emit("contact:send-request", { recipientId: userId }, (res) => {
+            if (res.ok) {
+                addSentPendingId(userId);
+                addToast("success", `Demande envoyée à ${username}`);
+            }
+            else
+                addToast("error", res.message ?? "Erreur");
+        });
+        onClose();
+    };
+    const handleBlock = () => {
+        const socket = getSocket();
+        if (!socket)
+            return;
+        socket.emit("contact:block", { userId }, (res) => {
+            if (res.ok && res.blockedUser) {
+                addBlockedUser(res.blockedUser);
+                removeContact(userId);
+                removeSentPendingId(userId);
+                removeIncomingRequest(incomingReqs.find((r) => r.senderId === userId)?.id ?? "");
+                addToast("warning", `${username} est maintenant bloqué`);
+            }
+            else {
+                addToast("error", res.message ?? "Erreur");
+            }
+        });
+        onClose();
+    };
+    const handleUnblock = () => {
+        const socket = getSocket();
+        if (!socket)
+            return;
+        socket.emit("contact:unblock", { userId }, (res) => {
+            if (res.ok) {
+                removeBlockedUser(userId);
+                addToast("success", `${username} est débloqué`);
+            }
+            else
+                addToast("error", res.message ?? "Erreur");
+        });
+        onClose();
+    };
+    const handleModAction = (event, payload) => {
+        const socket = getSocket();
+        if (!socket)
+            return;
+        socket.emit(event, payload, (res) => {
+            if (res.ok) {
+                addToast("success", "Action effectuée");
+                onClose();
+            }
+            else {
+                setCmdFeedback(res.message ?? "Erreur");
+            }
+        });
+    };
+    if (showReport) {
+        return (_jsx(ReportModal, { reportedId: userId, reportedUsername: username, context: messageContent ? "chat" : "user", messageContent: messageContent, messageAt: messageAt, onClose: () => { setShowReport(false); onClose(); } }));
+    }
+    const badge = ROLE_BADGE[userRole];
+    return (_jsx("div", { className: "fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center", onClick: onClose, children: _jsxs("div", { className: "w-full max-w-sm rounded-t-2xl border border-white/10 bg-panel p-5 shadow-2xl sm:rounded-2xl", onClick: (e) => e.stopPropagation(), children: [_jsxs("div", { className: "mb-4 flex items-center justify-between", children: [_jsxs("div", { className: "flex items-center gap-2", children: [_jsxs("span", { className: "font-semibold text-white", children: ["@", username] }), badge && (_jsx("span", { className: `rounded px-1.5 py-0.5 text-xs font-semibold ${badge.className}`, children: badge.label }))] }), _jsx("button", { type: "button", onClick: onClose, className: "text-slate-400 hover:text-white text-lg", children: "\u2715" })] }), cmdFeedback && (_jsx("div", { className: "mb-3 rounded-lg bg-coral/10 px-3 py-2 text-sm text-coral", children: cmdFeedback })), _jsxs("div", { className: "space-y-2", children: [!isGuest && isContact && onDm && (_jsxs("button", { type: "button", onClick: () => { onDm(); onClose(); }, className: "flex w-full items-center gap-3 rounded-xl bg-sky/10 px-4 py-3 text-left text-sm font-medium text-sky transition hover:bg-sky/20", children: [_jsx("span", { className: "text-lg", children: "\uD83D\uDCAC" }), " Message priv\u00E9"] })), !isGuest && !isContact && !isPendingSent && !isPendingIncoming && !isBlocked && (_jsxs("button", { type: "button", onClick: handleAddContact, disabled: !termsAccepted, className: "flex w-full items-center gap-3 rounded-xl bg-mint/10 px-4 py-3 text-left text-sm font-medium text-mint transition hover:bg-mint/20 disabled:cursor-not-allowed disabled:opacity-40", children: [_jsx("span", { className: "text-lg", children: "\u2795" }), " Ajouter en contact"] })), isPendingSent && (_jsxs("div", { className: "flex items-center gap-3 rounded-xl bg-white/5 px-4 py-3 text-sm text-slate-400", children: [_jsx("span", { className: "text-lg", children: "\u23F3" }), " Demande envoy\u00E9e"] })), isPendingIncoming && (_jsxs("div", { className: "flex items-center gap-3 rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-400", children: [_jsx("span", { className: "text-lg", children: "!" }), " Vous a envoy\u00E9 une demande de contact"] })), !isGuest && (isBlocked ? (_jsxs("button", { type: "button", onClick: handleUnblock, className: "flex w-full items-center gap-3 rounded-xl bg-mint/10 px-4 py-3 text-left text-sm font-medium text-mint transition hover:bg-mint/20", children: [_jsx("span", { className: "text-lg", children: "\uD83D\uDD13" }), " D\u00E9bloquer"] })) : confirmBlock ? (_jsxs("div", { className: "rounded-xl border border-coral/30 bg-coral/10 p-3", children: [_jsxs("p", { className: "mb-2 text-sm text-coral", children: ["Confirmer le blocage de @", username, " ?"] }), _jsxs("div", { className: "flex gap-2", children: [_jsx("button", { type: "button", onClick: handleBlock, className: "flex-1 rounded-lg bg-coral px-3 py-2 text-sm font-semibold text-white", children: "Bloquer" }), _jsx("button", { type: "button", onClick: () => setConfirmBlock(false), className: "flex-1 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300", children: "Annuler" })] })] })) : (_jsxs("button", { type: "button", onClick: () => setConfirmBlock(true), className: "flex w-full items-center gap-3 rounded-xl bg-white/5 px-4 py-3 text-left text-sm font-medium text-slate-300 transition hover:bg-coral/10 hover:text-coral", children: [_jsx("span", { className: "text-lg", children: "\uD83D\uDEAB" }), " Bloquer"] }))), !isAdmin && (_jsxs("button", { type: "button", onClick: () => setShowReport(true), className: "flex w-full items-center gap-3 rounded-xl bg-white/5 px-4 py-3 text-left text-sm font-medium text-slate-300 transition hover:bg-coral/10 hover:text-coral", children: [_jsx("span", { className: "text-lg", children: "\uD83D\uDEA9" }), " Signaler"] })), canModerate && roomId && !isAdmin && (_jsxs("div", { className: "mt-1 border-t border-white/10 pt-3 space-y-2", children: [_jsx("p", { className: "text-xs font-semibold uppercase tracking-wide text-slate-500", children: "Mod\u00E9ration" }), _jsxs("button", { type: "button", onClick: () => handleModAction("mod:timeout", { username, roomId }), className: "flex w-full items-center gap-3 rounded-xl bg-white/5 px-4 py-3 text-left text-sm font-medium text-slate-300 transition hover:bg-amber-500/10 hover:text-amber-400", children: [_jsx("span", { className: "text-lg", children: "\uD83D\uDD07" }), " Timeout (10 min)"] }), _jsxs("button", { type: "button", onClick: () => handleModAction("mod:kick", { username, roomId }), className: "flex w-full items-center gap-3 rounded-xl bg-white/5 px-4 py-3 text-left text-sm font-medium text-slate-300 transition hover:bg-amber-500/10 hover:text-amber-400", children: [_jsx("span", { className: "text-lg", children: "\uD83D\uDC62" }), " Expulser du salon"] }), _jsxs("button", { type: "button", onClick: () => handleModAction("mod:ban", { username }), className: "flex w-full items-center gap-3 rounded-xl bg-white/5 px-4 py-3 text-left text-sm font-medium text-slate-300 transition hover:bg-coral/10 hover:text-coral", children: [_jsx("span", { className: "text-lg", children: "\uD83D\uDD28" }), " Bannir"] })] }))] })] }) }));
+}

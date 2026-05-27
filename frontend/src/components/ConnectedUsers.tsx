@@ -1,15 +1,12 @@
 import { useState } from "react";
-import { getSocket } from "../sockets/chat.socket";
-import { useAuthStore } from "../store/auth.store";
-import { useContactStore } from "../store/contact.store";
-import { useNotificationStore } from "../store/notification.store";
 import type { ConnectedUser } from "../types";
-import { ReportModal } from "./ReportModal";
+import { UserActionModal } from "./UserActionModal";
 
 type Props = {
   users: ConnectedUser[];
   currentUserId?: string;
   isGuest?: boolean;
+  roomId?: string;
   onDmUser?: (userId: string, username: string) => void;
 };
 
@@ -18,82 +15,10 @@ const ROLE_BADGE: Record<string, { label: string; className: string }> = {
   moderator: { label: "MOD", className: "bg-sky/20 text-sky" },
 };
 
-const ROLE_DOT: Record<string, string> = {
-  admin:     "bg-coral",
-  moderator: "bg-sky",
-  user:      "bg-mint",
-};
+type ActionTarget = { id: string; username: string; role: string };
 
-type Relation = "contact" | "pending-sent" | "pending-received" | "blocked" | "none";
-
-export function ConnectedUsers({ users, currentUserId, isGuest, onDmUser }: Props) {
-  const termsAccepted = useAuthStore((s) => !!s.user?.termsAcceptedAt);
-  const [reportTarget, setReportTarget] = useState<{ id: string; username: string } | null>(null);
-  const [blockConfirm, setBlockConfirm] = useState<string | null>(null);
-
-  const contacts        = useContactStore((s) => s.contacts);
-  const sentPendingIds  = useContactStore((s) => s.sentPendingIds);
-  const incomingReqs    = useContactStore((s) => s.incomingRequests);
-  const blockedUsers    = useContactStore((s) => s.blockedUsers);
-
-  const addSentPendingId   = useContactStore((s) => s.addSentPendingId);
-  const addBlockedUser     = useContactStore((s) => s.addBlockedUser);
-  const removeBlockedUser  = useContactStore((s) => s.removeBlockedUser);
-  const removeContact      = useContactStore((s) => s.removeContact);
-  const removeSentPendingId = useContactStore((s) => s.removeSentPendingId);
-  const removeIncomingRequest = useContactStore((s) => s.removeIncomingRequest);
-  const { addToast } = useNotificationStore();
-
-  const getRelation = (userId: string): Relation => {
-    if (blockedUsers.some((b) => b.blockedId === userId)) return "blocked";
-    if (contacts.some((c) => c.id === userId)) return "contact";
-    if (sentPendingIds.includes(userId)) return "pending-sent";
-    if (incomingReqs.some((r) => r.senderId === userId)) return "pending-received";
-    return "none";
-  };
-
-  const handleSendRequest = (userId: string, username: string) => {
-    const socket = getSocket();
-    if (!socket) return;
-    socket.emit("contact:send-request", { recipientId: userId }, (res: { ok: boolean; message?: string }) => {
-      if (res.ok) {
-        addSentPendingId(userId);
-        addToast("success", `Demande envoyée à ${username}`);
-      } else {
-        addToast("error", res.message ?? "Erreur");
-      }
-    });
-  };
-
-  const handleBlock = (userId: string, username: string) => {
-    const socket = getSocket();
-    if (!socket) return;
-    socket.emit("contact:block", { userId }, (res: { ok: boolean; message?: string; blockedUser?: { id: string; blockedId: string; blocked: { id: string; username: string } } }) => {
-      if (res.ok && res.blockedUser) {
-        addBlockedUser(res.blockedUser);
-        removeContact(userId);
-        removeSentPendingId(userId);
-        removeIncomingRequest(incomingReqs.find((r) => r.senderId === userId)?.id ?? "");
-        addToast("warning", `${username} est maintenant bloqué`);
-      } else {
-        addToast("error", res.message ?? "Erreur");
-      }
-      setBlockConfirm(null);
-    });
-  };
-
-  const handleUnblock = (userId: string, username: string) => {
-    const socket = getSocket();
-    if (!socket) return;
-    socket.emit("contact:unblock", { userId }, (res: { ok: boolean; message?: string }) => {
-      if (res.ok) {
-        removeBlockedUser(userId);
-        addToast("success", `${username} est débloqué`);
-      } else {
-        addToast("error", res.message ?? "Erreur");
-      }
-    });
-  };
+export function ConnectedUsers({ users, currentUserId, isGuest, roomId, onDmUser }: Props) {
+  const [actionTarget, setActionTarget] = useState<ActionTarget | null>(null);
 
   return (
     <>
@@ -112,14 +37,18 @@ export function ConnectedUsers({ users, currentUserId, isGuest, onDmUser }: Prop
                 ? { label: "MOD", className: "bg-sky/20 text-sky" }
                 : ROLE_BADGE[user.role];
               const dot =
-                user.role === "admin" ? "bg-coral"
+                user.role === "admin"     ? "bg-coral"
                 : user.role === "moderator" || isRoomMod ? "bg-sky"
-                : ROLE_DOT[user.role] ?? "bg-mint";
+                : "bg-mint";
               const isSelf = user.id === currentUserId;
-              const rel = isSelf ? null : getRelation(user.id);
+              const clickable = !isSelf && !isGuest;
 
               return (
-                <div key={user.id} className="flex items-center gap-2 rounded-lg bg-ink/70 px-3 py-1.5">
+                <div
+                  key={user.id}
+                  onClick={clickable ? () => setActionTarget({ id: user.id, username: user.username, role: user.role }) : undefined}
+                  className={`flex items-center gap-2 rounded-lg bg-ink/70 px-3 py-2 ${clickable ? "cursor-pointer transition hover:bg-ink/90" : ""}`}
+                >
                   <span className={`h-2 w-2 flex-shrink-0 rounded-full ${dot}`} />
                   <span className="flex-1 truncate text-sm text-slate-200">{user.username}</span>
                   {badge && (
@@ -127,92 +56,7 @@ export function ConnectedUsers({ users, currentUserId, isGuest, onDmUser }: Prop
                       {badge.label}
                     </span>
                   )}
-                  {isSelf ? (
-                    <span className="text-xs text-slate-500">vous</span>
-                  ) : isGuest ? null : (
-                    <div className="flex items-center gap-1">
-                      {/* Contact / DM action */}
-                      {rel === "contact" && onDmUser && (
-                        <button
-                          type="button"
-                          onClick={() => onDmUser(user.id, user.username)}
-                          title={`Message privé à ${user.username}`}
-                          className="text-slate-400 transition hover:text-sky"
-                        >
-                          ✉
-                        </button>
-                      )}
-                      {rel === "none" && (
-                        <button
-                          type="button"
-                          onClick={() => termsAccepted && handleSendRequest(user.id, user.username)}
-                          title={termsAccepted ? `Demande de contact à ${user.username}` : "Acceptez la charte pour contacter"}
-                          className={`transition ${termsAccepted ? "text-slate-400 hover:text-mint" : "cursor-not-allowed text-slate-600"}`}
-                        >
-                          +
-                        </button>
-                      )}
-                      {rel === "pending-sent" && (
-                        <span title="Demande envoyée, en attente" className="text-xs text-slate-500">⏳</span>
-                      )}
-                      {rel === "pending-received" && (
-                        <span title="Cet utilisateur vous a envoyé une demande" className="text-xs text-amber-400">!</span>
-                      )}
-
-                      {/* Block / Unblock */}
-                      {rel !== "blocked" ? (
-                        blockConfirm === user.id ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleBlock(user.id, user.username)}
-                              title="Confirmer le blocage"
-                              className="text-xs text-coral transition hover:brightness-125"
-                            >
-                              ✓
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setBlockConfirm(null)}
-                              className="text-xs text-slate-500 transition hover:text-white"
-                            >
-                              ✕
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setBlockConfirm(user.id)}
-                            title={`Bloquer ${user.username}`}
-                            className="text-slate-500 transition hover:text-coral"
-                          >
-                            🚫
-                          </button>
-                        )
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleUnblock(user.id, user.username)}
-                          title={`Débloquer ${user.username}`}
-                          className="text-slate-500 transition hover:text-mint"
-                        >
-                          🔓
-                        </button>
-                      )}
-
-                      {/* Report */}
-                      {user.role !== "admin" && (
-                        <button
-                          type="button"
-                          onClick={() => setReportTarget({ id: user.id, username: user.username })}
-                          title={`Signaler ${user.username}`}
-                          className="text-slate-500 transition hover:text-coral"
-                        >
-                          🚩
-                        </button>
-                      )}
-                    </div>
-                  )}
+                  {isSelf && <span className="text-xs text-slate-500">vous</span>}
                 </div>
               );
             })}
@@ -220,12 +64,14 @@ export function ConnectedUsers({ users, currentUserId, isGuest, onDmUser }: Prop
         )}
       </aside>
 
-      {reportTarget && (
-        <ReportModal
-          reportedId={reportTarget.id}
-          reportedUsername={reportTarget.username}
-          context="user"
-          onClose={() => setReportTarget(null)}
+      {actionTarget && (
+        <UserActionModal
+          userId={actionTarget.id}
+          username={actionTarget.username}
+          userRole={actionTarget.role}
+          roomId={roomId}
+          onClose={() => setActionTarget(null)}
+          onDm={onDmUser ? () => onDmUser(actionTarget.id, actionTarget.username) : undefined}
         />
       )}
     </>
