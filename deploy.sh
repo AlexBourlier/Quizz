@@ -15,7 +15,7 @@ echo ""
 echo "[1/4] Copie des fichiers backend..."
 rsync -av --delete \
   --exclude 'node_modules' \
-  --exclude 'src' \
+  --exclude '/src' \
   --exclude '.env' \
   --exclude 'dataset' \
   "$REPO_DIR/backend/" "$BACKEND_DIR/"
