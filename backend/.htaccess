@@ -1,0 +1,8 @@
+PassengerNodejs /home/boal2619/nodevenv/api.quizz.alexandrebourlier.fr/20/bin/node
+PassengerAppRoot /home/boal2619/api.quizz.alexandrebourlier.fr
+PassengerAppType node
+PassengerStartupFile dist/src/server.js
+
+<IfModule mod_deflate.c>
+    SetEnvIfNoCase Request_URI "^/api/socket\.io" no-gzip
+</IfModule>

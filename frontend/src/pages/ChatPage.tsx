@@ -5,6 +5,7 @@ import { AdminPanel } from "../components/AdminPanel";
 import { ChatPanel } from "../components/ChatPanel";
 import { TermsModal } from "../components/TermsModal";
 import { ConnectedUsers } from "../components/ConnectedUsers";
+import { UserActionModal } from "../components/UserActionModal";
 import { DmContactList } from "../components/DmContactList";
 import { DmConversationPanel } from "../components/DmConversationPanel";
 import { ProfileModal } from "../components/ProfileModal";
@@ -63,6 +64,7 @@ export function ChatPage() {
   const [mobileQuizOpen, setMobileQuizOpen] = useState(false);
   const [mobileRoomsExpanded, setMobileRoomsExpanded] = useState(true);
   const [mobileUsersExpanded, setMobileUsersExpanded] = useState(false);
+  const [drawerActionTarget, setDrawerActionTarget] = useState<{ id: string; username: string; role: string } | null>(null);
 
   useEffect(() => {
     try {
@@ -449,14 +451,23 @@ export function ChatPage() {
                     {connectedUsers.length === 0 ? (
                       <p className="px-3 text-xs text-slate-500">Aucun utilisateur</p>
                     ) : (
-                      connectedUsers.map((u) => (
-                        <div key={u.id} className="flex items-center gap-2 rounded-lg bg-ink/70 px-3 py-1.5">
-                          <span className={`h-2 w-2 flex-shrink-0 rounded-full ${ROLE_DOT[u.role] ?? "bg-mint"}`} />
-                          <span className="flex-1 truncate text-sm text-slate-200">{u.username}</span>
-                          {u.role === "admin" && <span className="text-xs font-semibold text-coral">ADM</span>}
-                          {u.role === "moderator" && <span className="text-xs font-semibold text-sky">MOD</span>}
-                        </div>
-                      ))
+                      connectedUsers.map((u) => {
+                        const isSelf = u.id === user?.id;
+                        const clickable = !isSelf && !isGuest;
+                        return (
+                          <div
+                            key={u.id}
+                            onClick={clickable ? () => { setDrawerActionTarget({ id: u.id, username: u.username, role: u.role }); setMobileDrawerOpen(false); } : undefined}
+                            className={`flex items-center gap-2 rounded-lg bg-ink/70 px-3 py-1.5 ${clickable ? "cursor-pointer hover:bg-ink/90" : ""}`}
+                          >
+                            <span className={`h-2 w-2 flex-shrink-0 rounded-full ${ROLE_DOT[u.role] ?? "bg-mint"}`} />
+                            <span className="flex-1 truncate text-sm text-slate-200">{u.username}</span>
+                            {u.role === "admin" && <span className="text-xs font-semibold text-coral">ADM</span>}
+                            {u.role === "moderator" && <span className="text-xs font-semibold text-sky">MOD</span>}
+                            {isSelf && <span className="text-xs text-slate-500">vous</span>}
+                          </div>
+                        );
+                      })
                     )}
                   </div>
                 )}
@@ -587,6 +598,17 @@ export function ChatPage() {
             )}
           </div>
         </div>
+      )}
+
+      {drawerActionTarget && (
+        <UserActionModal
+          userId={drawerActionTarget.id}
+          username={drawerActionTarget.username}
+          userRole={drawerActionTarget.role}
+          roomId={activeRoomId ?? undefined}
+          onClose={() => setDrawerActionTarget(null)}
+          onDm={!isGuest ? () => { handleOpenDm(drawerActionTarget.id, drawerActionTarget.username); setDrawerActionTarget(null); } : undefined}
+        />
       )}
 
       {showAdminPanel && (
