@@ -12,7 +12,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const FILE = resolve(__dirname, "../dataset/database.txt");
+const FILE = resolve(__dirname, "../../dataset/database.txt");
 
 const p = new PrismaClient();
 
