@@ -56,6 +56,16 @@ export async function sendParentalConsentEmail(parentEmail, childUsername, token
 <p>Ce lien expire dans 7 jours. Sans réponse, le compte sera automatiquement supprimé.</p>`,
     });
 }
+export async function sendAdminAlert(subject, html) {
+    if (!isSmtpConfigured() || !env.ADMIN_EMAIL)
+        return;
+    await createTransport().sendMail({
+        from: env.EMAIL_FROM,
+        to: env.ADMIN_EMAIL,
+        subject: `[QuizzTest] ${subject}`,
+        html,
+    });
+}
 export async function sendPasswordResetEmail(to, token) {
     if (!isSmtpConfigured()) {
         console.log(`[email] SMTP non configuré — token reset pour ${to}: ${token}`);

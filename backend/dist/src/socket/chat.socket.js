@@ -38,12 +38,22 @@ async function getRoomUsers(io, roomId) {
         username: s.data.user?.username,
         role: s.data.user?.role
     }));
-    const roomMods = await prisma.roomModerator.findMany({
-        where: { roomId },
-        select: { userId: true }
-    });
+    const connectedIds = new Set(socketUsers.map((u) => u.id));
+    const [roomMods, admins] = await Promise.all([
+        prisma.roomModerator.findMany({ where: { roomId }, select: { userId: true } }),
+        prisma.user.findMany({
+            where: { role: { name: "admin" }, isSuspended: false, isGuest: false },
+            select: { id: true, username: true }
+        }),
+    ]);
     const roomModIds = new Set(roomMods.map((m) => m.userId));
-    const users = socketUsers.map((u) => ({ ...u, isRoomMod: roomModIds.has(u.id) }));
+    const alwaysOnline = admins
+        .filter((a) => !connectedIds.has(a.id))
+        .map((a) => ({ id: a.id, username: a.username, role: "admin", isRoomMod: false }));
+    const users = [
+        ...socketUsers.map((u) => ({ ...u, isRoomMod: roomModIds.has(u.id) })),
+        ...alwaysOnline,
+    ];
     users.sort((a, b) => {
         const rank = (u) => {
             if (u.role === "admin")

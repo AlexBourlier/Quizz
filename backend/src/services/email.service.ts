@@ -65,6 +65,16 @@ export async function sendParentalConsentEmail(
   });
 }
 
+export async function sendAdminAlert(subject: string, html: string): Promise<void> {
+  if (!isSmtpConfigured() || !env.ADMIN_EMAIL) return;
+  await createTransport().sendMail({
+    from: env.EMAIL_FROM,
+    to: env.ADMIN_EMAIL,
+    subject: `[QuizzTest] ${subject}`,
+    html,
+  });
+}
+
 export async function sendPasswordResetEmail(to: string, token: string): Promise<void> {
   if (!isSmtpConfigured()) {
     console.log(`[email] SMTP non configuré — token reset pour ${to}: ${token}`);

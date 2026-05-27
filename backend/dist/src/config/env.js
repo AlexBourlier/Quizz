@@ -32,6 +32,7 @@ const envSchema = z.object({
     SMTP_USER: z.string().optional(),
     SMTP_PASS: z.string().optional(),
     EMAIL_FROM: z.string().optional(),
+    ADMIN_EMAIL: z.string().optional(),
     // Captcha (optional — skip validation if not set)
     CAPTCHA_SECRET: z.string().optional(),
     CAPTCHA_PROVIDER: z.enum(["hcaptcha", "turnstile"]).default("turnstile"),

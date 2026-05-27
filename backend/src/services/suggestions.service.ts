@@ -1,4 +1,6 @@
 import { prisma } from "../config/prisma.js";
+import { sendAdminAlert } from "./email.service.js";
+import { env } from "../config/env.js";
 
 type SubmitInput = {
   type: "new_question" | "correction";
@@ -18,7 +20,7 @@ export async function submitSuggestion(data: SubmitInput) {
   if (data.type === "correction" && !data.questionId) {
     throw new Error("questionId requis pour une correction");
   }
-  return prisma.quizSuggestion.create({
+  const suggestion = await prisma.quizSuggestion.create({
     data: {
       type:        data.type,
       submitterId: data.submitterId,
@@ -33,6 +35,19 @@ export async function submitSuggestion(data: SubmitInput) {
       originalQ: { select: ORIGINAL_SELECT },
     },
   });
+
+  const typeLabel = data.type === "correction" ? "Correction" : "Nouvelle question";
+  sendAdminAlert(
+    `Suggestion — ${typeLabel}`,
+    `<p>Nouvelle suggestion soumise par <strong>${suggestion.submitter.username}</strong>.</p>
+     <p><strong>Type :</strong> ${typeLabel}</p>
+     <p><strong>Question :</strong> ${data.question}</p>
+     <p><strong>Réponse :</strong> ${data.answer}</p>
+     <p><strong>Catégorie :</strong> ${data.category} — ${data.difficulty}</p>
+     <p><a href="${env.FRONTEND_URL}">Accéder à l'application</a></p>`,
+  ).catch(() => undefined);
+
+  return suggestion;
 }
 
 export async function getMySuggestions(submitterId: string) {
