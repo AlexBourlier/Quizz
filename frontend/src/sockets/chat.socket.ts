@@ -12,7 +12,7 @@ export function connectSocket() {
   socket = io(import.meta.env.VITE_SOCKET_URL, {
     path: "/api/socket.io",
     auth: { token },
-    transports: ["websocket", "polling"],
+    transports: ["polling"],
     reconnection: true,
     reconnectionAttempts: 20,
     reconnectionDelay: 1000
