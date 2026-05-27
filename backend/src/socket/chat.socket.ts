@@ -125,7 +125,8 @@ export function buildSocketServer(httpServer: HttpServer) {
   const io = new Server(httpServer, {
     path: "/api/socket.io",
     cors: { origin: env.FRONTEND_URL, credentials: true },
-    transports: ["websocket", "polling"]
+    transports: ["websocket", "polling"],
+    perMessageDeflate: false
   });
 
   io.use((socket, next) => {
