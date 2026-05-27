@@ -1,0 +1,11 @@
+import { Router } from "express";
+import { deleteMessageController, getMessagesController, reactToMessageController, sendMessageController, updateMessageController } from "../controllers/messages.controller.js";
+import { authMiddleware } from "../middlewares/auth.middleware.js";
+const messagesRouter = Router();
+messagesRouter.use(authMiddleware);
+messagesRouter.get("/rooms/:roomId", getMessagesController);
+messagesRouter.post("/", sendMessageController);
+messagesRouter.patch("/:messageId", updateMessageController);
+messagesRouter.delete("/:messageId", deleteMessageController);
+messagesRouter.post("/:messageId/reactions", reactToMessageController);
+export default messagesRouter;

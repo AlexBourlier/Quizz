@@ -1,0 +1,25 @@
+import { Router } from "express";
+import authRouter from "./auth.routes.js";
+import messagesRouter from "./messages.routes.js";
+import quizRouter from "./quiz.routes.js";
+import roomsRouter from "./rooms.routes.js";
+import adminRouter from "./admin.routes.js";
+import usersRouter from "./users.routes.js";
+import reportsRouter from "./reports.routes.js";
+import moderationRouter, { dmReportRouter } from "./moderation.routes.js";
+import verificationRouter from "./verification.routes.js";
+const router = Router();
+router.get("/health", (_req, res) => {
+    res.json({ status: "ok" });
+});
+router.use("/auth", authRouter);
+router.use("/rooms", roomsRouter);
+router.use("/messages", messagesRouter);
+router.use("/quiz", quizRouter);
+router.use("/users", usersRouter);
+router.use("/admin", adminRouter);
+router.use("/reports", reportsRouter);
+router.use("/moderation", moderationRouter);
+router.use("/dm-reports", dmReportRouter);
+router.use("/auth", verificationRouter);
+export default router;

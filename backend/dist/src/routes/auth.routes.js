@@ -1,0 +1,11 @@
+import { Router } from "express";
+import { loginAsGuestController, loginController, logoutController, refreshController, registerController } from "../controllers/auth.controller.js";
+import { authRateLimit } from "../middlewares/rate-limit.middleware.js";
+import { authMiddleware } from "../middlewares/auth.middleware.js";
+const authRouter = Router();
+authRouter.post("/register", authRateLimit, registerController);
+authRouter.post("/login", authRateLimit, loginController);
+authRouter.post("/guest", authRateLimit, loginAsGuestController);
+authRouter.post("/refresh", authRateLimit, refreshController);
+authRouter.post("/logout", authMiddleware, logoutController);
+export default authRouter;

@@ -1,0 +1,11 @@
+import { Router } from "express";
+import { createRoomController, joinRoomController, leaveRoomController, listRoomsController } from "../controllers/rooms.controller.js";
+import { authMiddleware } from "../middlewares/auth.middleware.js";
+import { requireRole } from "../middlewares/role.middleware.js";
+const roomsRouter = Router();
+roomsRouter.use(authMiddleware);
+roomsRouter.get("/", listRoomsController);
+roomsRouter.post("/", requireRole(["admin", "moderator"]), createRoomController);
+roomsRouter.post("/:roomId/join", joinRoomController);
+roomsRouter.post("/:roomId/leave", leaveRoomController);
+export default roomsRouter;
