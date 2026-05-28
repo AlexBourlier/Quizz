@@ -17,8 +17,10 @@ rsync -av --delete \
   --exclude 'node_modules' \
   --exclude '/src' \
   --exclude '.env' \
-  --exclude 'dataset' \
   "$REPO_DIR/backend/" "$BACKEND_DIR/"
+
+echo "[1b] Copie du dataset..."
+rsync -av "$REPO_DIR/dataset/" "$BACKEND_DIR/dataset/"
 
 echo "[2/4] Installation des dépendances backend..."
 cd "$BACKEND_DIR"
