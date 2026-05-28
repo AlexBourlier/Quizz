@@ -48,6 +48,9 @@ async function main() {
 
   const existing = await prisma.quizQuestion.count();
   console.log(`Existing questions in DB: ${existing}. Clearing…`);
+  // Clear dependent records first
+  await prisma.quizRoundHistory.deleteMany();
+  await prisma.quizSuggestion.updateMany({ data: { questionId: null } });
   await prisma.quizQuestion.deleteMany();
 
   let imported = 0;
